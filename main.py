@@ -438,9 +438,12 @@ def login_emso_create(driver, title, image_names):
     
     if media_ids:
         post_id = statuses(token=token, content=title, media_ids=[media_ids])
-        
+        print("ID post:", post_id)
         
         if post_id:
+            post_comments(in_reply_to_id=post_id)
+            clear_comment_file()
+            
             video_folder = "videos"
             try:
                 for filename in os.listdir(video_folder):
@@ -453,6 +456,111 @@ def login_emso_create(driver, title, image_names):
                 print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
             return True
     return False
+
+def clear_comment_file(comment_file="comment.txt"):
+        """
+        Xóa toàn bộ nội dung của file comment.txt.
+        """
+        try:
+            with open(comment_file, "w", encoding="utf-8") as file:
+                file.truncate(0)  # Xóa hết nội dung file
+            print(f"Đã xóa nội dung của file {comment_file}.")
+        except Exception as e:
+            print(f"Lỗi khi xóa file {comment_file}: {e}")
+
+def post_comments(in_reply_to_id, delay=2):
+        """
+        Gửi comment từ file comment.txt lên API với token từ file tokens.json.
+        - Mỗi comment dùng một token ngẫu nhiên, không trùng trong cùng một lần chạy.
+        - `delay`: Thời gian chờ giữa các lần gửi để tránh bị block.
+        """
+
+        url = "https://prod-sn.emso.vn/api/v1/statuses"
+
+        # Đọc danh sách token từ file
+        tokens_file = "token_comment.json"
+        if not os.path.exists(tokens_file):
+            print("❌ Không tìm thấy file tokens.json")
+            return
+        
+        with open(tokens_file, "r", encoding="utf-8") as file:
+            try:
+                tokens = json.load(file)
+            except json.JSONDecodeError:
+                print("❌ Lỗi khi đọc file tokens.json: Nội dung không hợp lệ.")
+                return
+
+        if not tokens:
+            print("❌ Không có token hợp lệ trong danh sách.")
+            return
+
+        # Đọc danh sách comment từ file
+        comments_file = "data/comment.txt"
+        if not os.path.exists(comments_file):
+            print("❌ Không tìm thấy file comment.txt")
+            return
+        
+        with open(comments_file, "r", encoding="utf-8") as file:
+            comments = [line.strip() for line in file if line.strip()]  # Loại bỏ dòng trống
+
+        if not comments:
+            print("❌ Không có comment để đăng.")
+            return
+
+        # Lấy số lượng comment nhỏ nhất có thể gửi (giới hạn bởi số token)
+        num_posts = min(len(tokens), len(comments))
+
+        # Chọn token ngẫu nhiên, không trùng nhau
+        selected_tokens = random.sample(tokens, num_posts)
+
+        for i in range(num_posts):
+            token = selected_tokens[i]
+            comment = comments[i]
+
+            headers = {
+                'accept': 'application/json, text/plain, */*',
+                'authorization': f'Bearer {token}',
+                'content-type': 'application/json',
+            }
+            
+            payload = json.dumps({
+                "status": comment,
+                "in_reply_to_id": in_reply_to_id,
+                "sensitive": False,
+                "media_ids": [],
+                "spoiler_text": "",
+                "visibility": "public",
+                "poll": None,
+                "extra_body": None,
+                "tags": [],
+                "page_owner_id": None,
+            })
+
+            print(f"\n📌 Gửi comment: \"{comment}\" vào bài viết ID: {in_reply_to_id} với token: {token[:10]}...")
+
+            try:
+                response = requests.post(url, data=payload, headers=headers)
+                response_text = response.text  # Đọc phản hồi dưới dạng text
+
+                # print(f"📌 Response Status Code: {response.status_code}")
+                # print(f"📌 Response Body: {response_text}")  # In phản hồi để debug
+                # print(f"📌 Response payload: {payload}")  # In phản hồi để debug
+                # print(f"📌 Response url: {url}")  # In phản hồi để debug
+                
+
+                if response.status_code == 200:
+                    print(f"✅ Đã gửi comment thành công: {comment}")
+                elif response.status_code == 404:
+                    print(f"⚠️ Lỗi 404: Bài viết không tồn tại hoặc đã bị xóa. ID post: in_reply_to_id")
+                elif response.status_code == 500:
+                    print(f"❌ Lỗi máy chủ (500): API có thể đang gặp vấn đề hoặc payload không đúng.")
+                else:
+                    print(f"⚠️ Lỗi {response.status_code}: {response_text}")
+
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Lỗi khi gửi request: {e}")
+
+            time.sleep(delay)  # Chờ một khoảng thời gian trước khi gửi tiếp để tránh bị block
 
 #=====================================Main=====================================
 def main():
