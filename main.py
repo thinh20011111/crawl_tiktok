@@ -330,10 +330,23 @@ def save_comments_to_file(comments, filename="comment.txt"):
         print(f"⚠ Lỗi lưu bình luận: {e}")
 
 def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="video/mp4"):
-    """Tải video lên EMSO và trả về ID video."""
-    token_upload = json.load("token_upload.json")
-    print(f"token_upload: {token_upload}")
-    
+    if not os.path.exists(file_path):
+        print(f"⚠ File không tồn tại: {file_path}")
+        return None
+
+    try:
+        with open("token_upload.json", "r", encoding="utf-8") as f:
+            token_data = json.load(f)
+            if isinstance(token_data, list):
+                token_upload = random.choice(token_data)
+            elif isinstance(token_data, dict):
+                token_upload = token_data.get("token")
+            else:
+                raise ValueError("Định dạng token_upload.json không hợp lệ")
+    except Exception as e:
+        print(f"⚠ Lỗi đọc token_upload.json: {e}")
+        return None
+
     url = "https://prod-pt.emso.vn/api/v1/videos/upload"
     headers = {
         "accept": "application/json, text/plain, */*",
@@ -342,7 +355,7 @@ def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="vide
         "referer": "https://emso.vn/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
     }
-    
+
     files = {
         "videofile": (file_name, open(file_path, "rb"), mime_type),
         "name": (None, file_name),
@@ -355,16 +368,15 @@ def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="vide
     try:
         response = requests.post(url, headers=headers, files=files)
         response_data = response.json()
-
         if response.status_code == 200 and "id" in response_data:
             return response_data["id"]
         else:
-            print(f"⚠ Lỗi tải video: {response_data}")
+            print(f"⚠ Lỗi tải video: {response.text}")
             return None
     except Exception as e:
         print(f"⚠ Lỗi kết nối API: {e}")
         return None
-
+    
 def statuses(token, content, media_ids, post_type="moment", visibility="public"):
     """Đăng bài lên EMSO và trả về ID bài đăng."""
     
@@ -379,7 +391,7 @@ def statuses(token, content, media_ids, post_type="moment", visibility="public")
     }
 
     payload = {
-        "content": content,
+        "status": content,
         "post_type": post_type,
         "visibility": visibility,
         "media_ids": media_ids,
@@ -420,21 +432,27 @@ def clean_tiktok_url(url):
 def login_emso_create(driver, title, image_names):
     token = get_random_token()
     
-    file_path = f"videos/{image_names}"
-    media_ids = upload(file_path = file_path, file_name=image_names, token=token)
+    file_path = image_names[0]  # Lấy file_path từ danh sách
+    print(f"Debug - Uploading file: {file_path}")
+    media_ids = upload(file_path=file_path, file_name=os.path.basename(file_path), token=token)
     
-    statuses(token=token, content=title, media_ids=media_ids)
-    
-    video_folder = "videos"
-    try:
-        for filename in os.listdir(video_folder):
-            file_to_remove = os.path.join(video_folder, filename)
-            if os.path.isfile(file_to_remove):
-                os.remove(file_to_remove)
-                print(f"🗑️ Đã xóa vĩnh viễn file: {file_to_remove}")
-        print(f"🗑️ Đã xóa toàn bộ file trong thư mục {video_folder}")
-    except Exception as e:
-        print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
+    if media_ids:
+        post_id = statuses(token=token, content=title, media_ids=[media_ids])
+        
+        
+        if post_id:
+            video_folder = "videos"
+            try:
+                for filename in os.listdir(video_folder):
+                    file_to_remove = os.path.join(video_folder, filename)
+                    if os.path.isfile(file_to_remove):
+                        os.remove(file_to_remove)
+                        print(f"🗑️ Đã xóa vĩnh viễn file: {file_to_remove}")
+                print(f"🗑️ Đã xóa toàn bộ file trong thư mục {video_folder}")
+            except Exception as e:
+                print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
+            return True
+    return False
 
 #=====================================Main=====================================
 def main():
