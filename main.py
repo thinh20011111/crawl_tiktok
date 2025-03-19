@@ -3,9 +3,10 @@ import json
 import os
 import random
 import yt_dlp
+import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
@@ -13,11 +14,12 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from urllib.parse import urlparse
 
 # Xpath
 SHARE_BUTTON = "(//span[@data-e2e='share-icon'])[{index}]"
 INPUT_URL = "//input[@class='TUXTextInputCore-input']"
-CLOSE_POPUP_URL = "//button[@aria-label='close']"
+# CLOSE_POPUP_URL = "//button[@aria-label='close']"
 VIDEO_DESC = "//article[@data-scroll-index='{index}' and @data-e2e='recommend-list-item-container']//div[contains(@data-e2e, 'video-desc')]"
 
 # File lưu dữ liệu
@@ -79,6 +81,10 @@ SAVE_IMAGE_AVT = "//button[div[contains(text(), 'Lưu')]]"
 IMG_AVATAR = "/html/body/div[1]/div/div/main/div/div[2]/div/div[1]/div[1]/div[2]/div/div[1]/div[1]/div[1]/div/img"
 DIALOG_UPDATE = "//div[@role='dialog' and @aria-labelledby='customized-dialog-title']" 
 FORYOU_BUTTON = "//button[contains(@class, 'TUXButton') and .//div[contains(text(), 'Dành cho bạn')]]"
+
+CLOSE_POPUP_URL = "//button[@class='TUXUnstyledButton TUXNavBarIconButton' and @aria-label='close']"
+COMMENT_XPATH_TEMPLATE = "/html/body/div[1]/div[2]/div[3]/div/div[2]/div[1]/div/div[{}]/div[1]/div[1]/p[1]"
+OPEN_TAB_COMMENT = "/html/body/div[1]/div[2]/main/div[1]/article[{index}]/div/section[2]/button[2]/span"
 
 def init_driver():
     chrome_options = Options()
@@ -172,59 +178,27 @@ def get_video_info(driver, index):
         print(f"Error in get_video_info: {e}")
         return None, None, None
 
-def login_emso_create(driver, title, image_names):
-    with open("account_create_moment.json", "r", encoding="utf-8") as file:
-        accounts = json.load(file)
-
-    random_account = random.choice(list(accounts.values()))
-    username = random_account["username"]
-    password = random_account["password"]
-
-    driver.get("https://emso.vn/")
-    time.sleep(1)
-
-    input_text(driver, LOGIN_EMAIL_INPUT, username)  # Thêm driver vào đây
-    input_text(driver, LOGIN_PWD_INPUT, password)  # Thêm driver vào đây
-    click_element(driver, LOGIN_SUBMIT_BTN)  # Thêm driver vào đây
-    wait_for_element_clickable(driver, PROFILE_ACCOUNT_ICON)
-
-    print(f"Đăng nhập bằng tài khoản: {username}")
-    
-    # Mở form tạo bài đăng
-    WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.XPATH, OPEN_FORM_MOMENT)))  # Ensure post loads
-    click_element(driver, OPEN_FORM_MOMENT)  # Thêm driver vào đây
-
-    # Nhập tiêu đề bài đăng
-    wait_for_element_present(driver, INPUT_TITLE_MOMENT)  # Cũng cần thêm driver nếu lỗi
-    input_text(driver, INPUT_TITLE_MOMENT, title)  # Cập nhật lại nếu cần
-    
-    upload_video(driver, image_names, INPUT_UPLOAD_MOMENT)
-
-    # Nhấn nút đăng bài
-    wait_for_element_present(driver, BUTTON_CREATE_MOMENT)
-    click_element(driver, BUTTON_CREATE_MOMENT)
-    wait_for_element_not_present(driver, BUTTON_CREATE_MOMENT)
-    
-    #đăng xuất sau khi đăng
-    click_element(driver,PROFILE_ACCOUNT_ICON)
-    click_element(driver,LOGOUT_BTN)
-    
-    video_folder = "videos"
-    try:
-        for filename in os.listdir(video_folder):
-            file_to_remove = os.path.join(video_folder, filename)
-            if os.path.isfile(file_to_remove):
-                os.remove(file_to_remove)
-                print(f"🗑️ Đã xóa vĩnh viễn file: {file_to_remove}")
-        print(f"🗑️ Đã xóa toàn bộ file trong thư mục {video_folder}")
-    except Exception as e:
-        print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
-
 def click_element(driver, xpath):
-    """Tìm và click vào phần tử."""
-    element = wait_for_element_clickable(driver, xpath)  # Thêm driver vào đây
-    element.click()
+    """Click vào phần tử theo XPath, đảm bảo nó xuất hiện trên màn hình và không bị chặn."""
+    try:
+        # Chờ phần tử xuất hiện và có thể click
+        element = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, xpath))
+        )
 
+        # Cuộn phần tử vào vùng hiển thị
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+        time.sleep(0.5)  # Chờ một chút để trang ổn định
+
+        try:
+            element.click()
+        except ElementClickInterceptedException:
+            print("⚠ Phần tử bị chặn khi click! Thử click bằng JavaScript.")
+            driver.execute_script("arguments[0].click();", element)  # Click bằng JS
+    
+    except TimeoutException:
+        print(f"⛔ Không thể click vào phần tử: {xpath} (Timeout)")
+        
 def wait_for_element_clickable(driver, xpath, timeout=10):
     """Chờ đến khi element có thể click được."""
     return WebDriverWait(driver, timeout).until(
@@ -309,7 +283,160 @@ def close_popup(driver):
 def move_to_next_video(driver):
     driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ARROW_DOWN)
     time.sleep(3)
+    
+def get_random_comments(driver, index):
+    """Lấy số lượng bình luận ngẫu nhiên từ video TikTok, bắt đầu từ bình luận thứ 3."""
+    comments = []
+    num_comments = random.randint(1, 20)  # Chọn số lượng bình luận ngẫu nhiên
 
+    print("index:", index)
+    click_element(driver, OPEN_TAB_COMMENT.replace("{index}", str(index)))
+
+    # Chờ bình luận thứ 3 xuất hiện trước khi tiếp tục
+    third_comment_xpath = COMMENT_XPATH_TEMPLATE.format(3)
+    try:
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, third_comment_xpath))
+        )
+    except Exception as e:
+        print(f"⚠ Không tìm thấy bình luận thứ 3: {e}")
+        return []
+
+    # Lấy bình luận từ vị trí thứ 3 trở đi
+    i = 3  # Bắt đầu từ comment số 3
+    while len(comments) < num_comments:
+        comment_xpath = COMMENT_XPATH_TEMPLATE.format(i)
+        try:
+            comment_element = WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.XPATH, comment_xpath))
+            )
+            comment_text = comment_element.text.strip()
+            if comment_text:
+                comments.append(comment_text)
+        except Exception:
+            break  # Nếu không tìm thấy comment tiếp theo, dừng vòng lặp
+        i += 1  # Tiếp tục lấy comment tiếp theo
+
+    return comments
+
+def save_comments_to_file(comments, filename="comment.txt"):
+    """Lưu bình luận vào file, mỗi bình luận là một dòng."""
+    try:
+        with open(filename, "a", encoding="utf-8") as file:
+            for comment in comments:
+                file.write(comment + "\n")
+        print(f"✅ Đã lưu {len(comments)} bình luận vào {filename}")
+    except Exception as e:
+        print(f"⚠ Lỗi lưu bình luận: {e}")
+
+def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="video/mp4"):
+    """Tải video lên EMSO và trả về ID video."""
+    token_upload = json.load("token_upload.json")
+    print(f"token_upload: {token_upload}")
+    
+    url = "https://prod-pt.emso.vn/api/v1/videos/upload"
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "authorization": f"Bearer {token_upload}",
+        "origin": "https://emso.vn",
+        "referer": "https://emso.vn/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+    }
+    
+    files = {
+        "videofile": (file_name, open(file_path, "rb"), mime_type),
+        "name": (None, file_name),
+        "token": (None, token),
+        "channelId": (None, str(channel_id)),
+        "privacy": (None, str(privacy)),
+        "mimeType": (None, mime_type)
+    }
+
+    try:
+        response = requests.post(url, headers=headers, files=files)
+        response_data = response.json()
+
+        if response.status_code == 200 and "id" in response_data:
+            return response_data["id"]
+        else:
+            print(f"⚠ Lỗi tải video: {response_data}")
+            return None
+    except Exception as e:
+        print(f"⚠ Lỗi kết nối API: {e}")
+        return None
+
+def statuses(token, content, media_ids, post_type="moment", visibility="public"):
+    """Đăng bài lên EMSO và trả về ID bài đăng."""
+    
+    url = "https://prod-sn.emso.vn/api/v1/statuses"
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "authorization": f"Bearer {token}",
+        "content-type": "application/json",
+        "origin": "https://emso.vn",
+        "referer": "https://emso.vn/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+    }
+
+    payload = {
+        "content": content,
+        "post_type": post_type,
+        "visibility": visibility,
+        "media_ids": media_ids,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response_data = response.json()
+
+        if response.status_code == 200 and "id" in response_data:
+            return response_data["id"]
+        else:
+            print(f"⚠ Lỗi đăng bài: {response_data}")
+            return None
+    except Exception as e:
+        print(f"⚠ Lỗi kết nối API: {e}")
+        return None
+
+def get_random_token(tokens_file="tokens.json"):
+    """Lấy một token ngẫu nhiên từ file JSON."""
+    try:
+        with open(tokens_file, "r", encoding="utf-8") as file:
+            tokens = json.load(file)  # Đọc danh sách token
+
+            if not tokens:
+                print("⚠ Không có token nào trong file.")
+                return None
+
+            return random.choice(tokens)  # Chọn ngẫu nhiên một token
+    except Exception as e:
+        print(f"⚠ Lỗi đọc file token: {e}")
+        return None
+
+def clean_tiktok_url(url):
+    parsed_url = urlparse(url)
+    return f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+
+def login_emso_create(driver, title, image_names):
+    token = get_random_token()
+    
+    file_path = f"videos/{image_names}"
+    media_ids = upload(file_path = file_path, file_name=image_names, token=token)
+    
+    statuses(token=token, content=title, media_ids=media_ids)
+    
+    video_folder = "videos"
+    try:
+        for filename in os.listdir(video_folder):
+            file_to_remove = os.path.join(video_folder, filename)
+            if os.path.isfile(file_to_remove):
+                os.remove(file_to_remove)
+                print(f"🗑️ Đã xóa vĩnh viễn file: {file_to_remove}")
+        print(f"🗑️ Đã xóa toàn bộ file trong thư mục {video_folder}")
+    except Exception as e:
+        print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
+
+#=====================================Main=====================================
 def main():
     num_videos = int(input("Nhập số lượng video cần tải: "))
     driver = init_driver()
@@ -360,6 +487,16 @@ def main():
             save_data(data)
             downloaded_count += 1
             print(f"✅ Video {downloaded_count} đã tải xuống: {title}")
+            
+            #Crawl comment
+            
+            time.sleep(3)
+
+            comments = get_random_comments(driver, index = index)
+            if comments:
+                save_comments_to_file(comments)
+            else:
+                print("⚠ Không có bình luận nào để lưu.")
 
             # Đăng lên EMSO
             print("🔄 Chuyển sang EMSO để đăng video...")
