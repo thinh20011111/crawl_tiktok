@@ -441,6 +441,7 @@ def login_emso_create(driver, title, image_names):
         print("ID post:", post_id)
         
         if post_id:
+            print(f"📢 Chuẩn bị gọi post_comments với ID bài viết: {post_id}")
             post_comments(in_reply_to_id=post_id)
             clear_comment_file()
             
@@ -495,7 +496,7 @@ def post_comments(in_reply_to_id, delay=2):
             return
 
         # Đọc danh sách comment từ file
-        comments_file = "data/comment.txt"
+        comments_file = "comment.txt"
         if not os.path.exists(comments_file):
             print("❌ Không tìm thấy file comment.txt")
             return
