@@ -126,13 +126,23 @@ def download_video(url, video_id):
         os.makedirs(VIDEO_FOLDER)
 
     output_path = f"{VIDEO_FOLDER}/{video_id}.mp4"
-    ydl_opts = {'outtmpl': output_path, 'format': 'bestvideo+bestaudio/best'}
+    ydl_opts = {
+        'outtmpl': output_path,
+        'format': 'bestvideo+bestaudio/best',
+        'quiet': False,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Referer': 'https://www.tiktok.com/',
+        }
+    }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         return output_path
-    except:
+    except Exception as e:
+        print("Download error:", e)
         return None
+
     
 def get_video_info(driver, index):
     try:
