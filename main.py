@@ -86,20 +86,49 @@ CLOSE_POPUP_URL = "//button[@class='TUXUnstyledButton TUXNavBarIconButton' and @
 COMMENT_XPATH_TEMPLATE = "/html/body/div[1]/div[2]/div[3]/div/div[2]/div[1]/div/div[{}]/div[1]/div[1]/p[1]"
 OPEN_TAB_COMMENT = "/html/body/div[1]/div[2]/main/div[1]/article[{index}]/div/section[2]/button[2]/span"
 
-def init_driver():
+ITEM_VIDEO = "//video[.//source[@data-index='{index}']]"
+DOWLOAD_VIDEO_BUTTON = "//div[@data-e2e='right-click-menu-popover_download-video']"
+BUTTON_COMMENT = "(//span[@data-e2e='comment-icon'])[{index}]"
+COMMENT_ITEM = "(//span[@data-e2e='comment-level-1'])[{index}]"
+NEXT_VIDEO = "//div[@class='css-1o2f1ti-DivFeedNavigationContainer ei9jdxs0']//div[2]//button[1]"
+
+def load_config(path="config.json"):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def init_driver(config_path="config.json"):
+    config = load_config(config_path)
     chrome_options = Options()
+
+    # Thêm thông tin từ cấu hình
+    chrome_options.add_argument(f"--user-data-dir={config['user_data_dir']}")
+
+    # Các tuỳ chọn trình duyệt
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--mute-audio") 
+    chrome_options.add_argument("--mute-audio")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-webgl")
     chrome_options.add_argument("--disable-webrtc")
-    chrome_options.add_experimental_option("prefs", {"profile.default_content_setting_values.webrtc": 2})  # Chặn WebRTC hoàn toàn
+    chrome_options.add_experimental_option("prefs", {
+        "profile.default_content_setting_values.webrtc": 2
+    })
 
+    # Khởi tạo driver
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
+
+    # Đặt geolocation
+    location = config["location"]
+    driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+        "latitude": location["latitude"],
+        "longitude": location["longitude"],
+        "accuracy": location["accuracy"]
+    })
+
+    time.sleep(2)
     return driver
 
 def load_existing_data():
@@ -121,43 +150,16 @@ def get_video_duration(url):
     except:
         return 0
 
-def download_video(url, video_id):
-    if not os.path.exists(VIDEO_FOLDER):
-        os.makedirs(VIDEO_FOLDER)
-
-    output_path = f"{VIDEO_FOLDER}/{video_id}.mp4"
-    ydl_opts = {
-        'outtmpl': output_path,
-        'format': 'bestvideo+bestaudio/best',
-        'quiet': False,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'Referer': 'https://www.tiktok.com/',
-        }
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return output_path
-    except Exception as e:
-        print("Download error:", e)
-        return None
-
+def download_video(driver, index):
+    right_click(driver, ITEM_VIDEO.replace("{index}", str(index)))
+    click_element(driver, DOWLOAD_VIDEO_BUTTON)
     
 def get_video_info(driver, index):
     try:
         wait = WebDriverWait(driver, 10)
-
-        # Tìm và click vào nút chia sẻ
-        share_button_xpath = SHARE_BUTTON.replace("{index}", str(index))
-        share_button = wait.until(EC.element_to_be_clickable((By.XPATH, share_button_xpath)))
-        driver.execute_script("arguments[0].scrollIntoView();", share_button)
-        driver.execute_script("arguments[0].click();", share_button)
-        time.sleep(3)  # Tăng thời gian chờ để popup tải
-
+     
         # Lấy URL video
-        input_element = wait.until(EC.presence_of_element_located((By.XPATH, INPUT_URL)))
-        video_url = input_element.get_attribute("value")
+        video_url = driver.current_url
         video_id = video_url.split("/")[-1].split("?")[0]
         print(f"Debug - Video URL: {video_url}")
 
@@ -208,6 +210,16 @@ def click_element(driver, xpath):
     
     except TimeoutException:
         print(f"⛔ Không thể click vào phần tử: {xpath} (Timeout)")
+      
+def right_click(driver, xpath):
+    try:
+        element = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, xpath))
+        )
+        actions = ActionChains(driver)
+        actions.context_click(element).perform()
+    except Exception as e:
+        print("Lỗi khi thực hiện right-click:", e)
         
 def wait_for_element_clickable(driver, xpath, timeout=10):
     """Chờ đến khi element có thể click được."""
@@ -452,7 +464,7 @@ def login_emso_create(driver, title, image_names):
         
         if post_id:
             print(f"📢 Chuẩn bị gọi post_comments với ID bài viết: {post_id}")
-            post_comments(in_reply_to_id=post_id)
+            post_comments(status_id=post_id)
             clear_comment_file()
             
             video_folder = "videos"
@@ -479,14 +491,8 @@ def clear_comment_file(comment_file="comment.txt"):
         except Exception as e:
             print(f"Lỗi khi xóa file {comment_file}: {e}")
 
-def post_comments(in_reply_to_id, delay=2):
-        """
-        Gửi comment từ file comment.txt lên API với token từ file tokens.json.
-        - Mỗi comment dùng một token ngẫu nhiên, không trùng trong cùng một lần chạy.
-        - `delay`: Thời gian chờ giữa các lần gửi để tránh bị block.
-        """
-
-        url = "https://prod-sn.emso.vn/api/v1/statuses"
+def post_comments(status_id, delay=2):
+        url = f"https://prod-sn.emso.vn/api/v1/statuses/{status_id}/comments"
 
         # Đọc danh sách token từ file
         tokens_file = "token_comment.json"
@@ -530,13 +536,25 @@ def post_comments(in_reply_to_id, delay=2):
 
             headers = {
                 'accept': 'application/json, text/plain, */*',
+                'accept-language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
                 'authorization': f'Bearer {token}',
                 'content-type': 'application/json',
+                'origin': 'https://emso.vn',
+                'priority': 'u=1, i',
+                'referer': 'https://emso.vn/',
+                'sec-ch-ua': '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-site',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
             }
             
             payload = json.dumps({
+                "id": random.random(),  # Tạo số ngẫu nhiên như trong curl example
                 "status": comment,
-                "in_reply_to_id": in_reply_to_id,
+                "status_id": str(status_id),
                 "sensitive": False,
                 "media_ids": [],
                 "spoiler_text": "",
@@ -544,25 +562,19 @@ def post_comments(in_reply_to_id, delay=2):
                 "poll": None,
                 "extra_body": None,
                 "tags": [],
-                "page_owner_id": None,
+                "page_owner_id": None
             })
 
-            print(f"\n📌 Gửi comment: \"{comment}\" vào bài viết ID: {in_reply_to_id} với token: {token[:10]}...")
+            print(f"\n📌 Gửi comment: \"{comment}\" vào bài viết ID: {status_id} với token: {token[:10]}...")
 
             try:
                 response = requests.post(url, data=payload, headers=headers)
-                response_text = response.text  # Đọc phản hồi dưới dạng text
-
-                # print(f"📌 Response Status Code: {response.status_code}")
-                # print(f"📌 Response Body: {response_text}")  # In phản hồi để debug
-                # print(f"📌 Response payload: {payload}")  # In phản hồi để debug
-                # print(f"📌 Response url: {url}")  # In phản hồi để debug
-                
+                response_text = response.text
 
                 if response.status_code == 200:
                     print(f"✅ Đã gửi comment thành công: {comment}")
                 elif response.status_code == 404:
-                    print(f"⚠️ Lỗi 404: Bài viết không tồn tại hoặc đã bị xóa. ID post: in_reply_to_id")
+                    print(f"⚠️ Lỗi 404: Bài viết không tồn tại hoặc đã bị xóa. ID post: {status_id}")
                 elif response.status_code == 500:
                     print(f"❌ Lỗi máy chủ (500): API có thể đang gặp vấn đề hoặc payload không đúng.")
                 else:
@@ -579,7 +591,8 @@ def main():
     driver = init_driver()
     driver.maximize_window()
     driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
-    time.sleep(30)  # Chờ người dùng thao tác thủ công nếu cần
+    click_element(driver, BUTTON_COMMENT.replace("{index}", "1"))  # Click vào video đầu tiên
+    # time.sleep(3000)  # Chờ người dùng thao tác thủ công nếu cần
 
     data = load_existing_data()
     downloaded_count = 0
@@ -589,9 +602,10 @@ def main():
         while downloaded_count < num_videos:
             print(f"📥 Đang lấy video thứ {downloaded_count + 1}/{num_videos}...")
             video_id, title, video_url = get_video_info(driver, index)
+            
             if not video_id or not title:
-                driver.refresh()
-                print("⚠ Lỗi lấy thông tin video, làm mới trang.")
+                click_element(driver, NEXT_VIDEO)  # Chuyển sang video tiếp theo
+                print("⚠ Lỗi lấy thông tin video, chuyển video tiếp thep.")
                 index = 1
                 time.sleep(5)
                 continue
@@ -610,8 +624,9 @@ def main():
                 move_to_next_video(driver)
                 index += 1
                 continue
-
-            file_path = download_video(video_url, video_id)
+            
+            download_video(driver, index)
+            file_path = r"C:\Users\Thinh\Downloads\Download (1).mp4"
             close_popup(driver)
 
             if not file_path:
@@ -643,7 +658,7 @@ def main():
                 print("⚠ Đăng bài thất bại, quay lại TikTok...")
 
             driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
-            time.sleep(10)  # Chờ trang TikTok tải lại
+            time.sleep(60)  # Chờ trang TikTok tải lại
             index += 1
 
     finally:

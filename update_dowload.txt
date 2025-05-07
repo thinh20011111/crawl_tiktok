@@ -1,3 +1,11 @@
 chạy lệnh: pip install -U yt-dlp
 
 Nếu download video tiktok bị lỗi
+
+video_urls = [
+        "https://www.tiktok.com/@contrastcoffee_/video/7496511126734228744?is_from_webapp=1&sender_device=pc",  # Thay bằng URL thật
+        "https://www.tiktok.com/@lachannelmlbb/video/7497874755870133547?is_from_webapp=1&sender_device=pc",
+        "https://www.tiktok.com/@sonkoibarbershop/video/7484278761492385031?is_from_webapp=1&sender_device=pc",
+        "https://www.tiktok.com/@ducchupanh9x/video/7497664151972564232?is_from_webapp=1&sender_device=pc",
+        "https://www.tiktok.com/@quyethoang6903/video/7469738416759000338?is_from_webapp=1&sender_device=pc"
+    ]
