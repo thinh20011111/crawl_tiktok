@@ -14,6 +14,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+import shutil
 from urllib.parse import urlparse
 
 # Xpath
@@ -92,6 +93,9 @@ BUTTON_COMMENT = "(//span[@data-e2e='comment-icon'])[{index}]"
 COMMENT_ITEM = "(//span[@data-e2e='comment-level-1'])[{index}]"
 NEXT_VIDEO = "//div[@class='css-1o2f1ti-DivFeedNavigationContainer ei9jdxs0']//div[2]//button[1]"
 
+VIDEO_DOWNLOAD_PATH = "videos/Download.mp4"
+VIDEO_SAVE_DIR = "videos"
+
 def load_config(path="config.json"):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -149,10 +153,6 @@ def get_video_duration(url):
             return info.get("duration", 0)
     except:
         return 0
-
-def download_video(driver, index):
-    right_click(driver, ITEM_VIDEO.replace("{index}", str(index)))
-    click_element(driver, DOWLOAD_VIDEO_BUTTON)
     
 def get_video_info(driver, index):
     try:
@@ -303,7 +303,7 @@ def close_popup(driver):
         pass
 
 def move_to_next_video(driver):
-    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ARROW_DOWN)
+    click_element(driver, NEXT_VIDEO)
     time.sleep(3)
     
 def get_random_comments(driver, index):
@@ -312,22 +312,22 @@ def get_random_comments(driver, index):
     num_comments = random.randint(1, 20)  # Chọn số lượng bình luận ngẫu nhiên
 
     print("index:", index)
-    click_element(driver, OPEN_TAB_COMMENT.replace("{index}", str(index)))
+    # click_element(driver, OPEN_TAB_COMMENT.replace("{index}", str(index)))
 
     # Chờ bình luận thứ 3 xuất hiện trước khi tiếp tục
-    third_comment_xpath = COMMENT_XPATH_TEMPLATE.format(3)
+    third_comment_xpath = COMMENT_ITEM.replace("{index}", str(index))
     try:
         WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.XPATH, third_comment_xpath))
         )
     except Exception as e:
-        print(f"⚠ Không tìm thấy bình luận thứ 3: {e}")
+        print(f"⚠ Không tìm thấy bình luận nào: {e}")
         return []
 
     # Lấy bình luận từ vị trí thứ 3 trở đi
-    i = 3  # Bắt đầu từ comment số 3
+    i = 1  # Bắt đầu từ comment số 3
     while len(comments) < num_comments:
-        comment_xpath = COMMENT_XPATH_TEMPLATE.format(i)
+        comment_xpath = COMMENT_ITEM.replace("{index}", str(i))
         try:
             comment_element = WebDriverWait(driver, 3).until(
                 EC.presence_of_element_located((By.XPATH, comment_xpath))
@@ -451,22 +451,29 @@ def clean_tiktok_url(url):
     parsed_url = urlparse(url)
     return f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
 
-def login_emso_create(driver, title, image_names):
+def login_emso_create(driver, title, image_names=None):
     token = get_random_token()
-    
-    file_path = image_names[0]  # Lấy file_path từ danh sách
+
+    # Đường dẫn cố định đến file Download.mp4 trong thư mục videos
+    file_path = os.path.join("videos", "Download.mp4")
     print(f"Debug - Uploading file: {file_path}")
-    media_ids = upload(file_path=file_path, file_name=os.path.basename(file_path), token=token)
-    
+
+    # Kiểm tra file có tồn tại không
+    if not os.path.isfile(file_path):
+        print(f"❌ Không tìm thấy file: {file_path}")
+        return False
+
+    media_ids = upload(file_path=file_path, file_name="Download.mp4", token=token)
+
     if media_ids:
         post_id = statuses(token=token, content=title, media_ids=[media_ids])
         print("ID post:", post_id)
-        
+
         if post_id:
             print(f"📢 Chuẩn bị gọi post_comments với ID bài viết: {post_id}")
             post_comments(status_id=post_id)
             clear_comment_file()
-            
+
             video_folder = "videos"
             try:
                 for filename in os.listdir(video_folder):
@@ -478,7 +485,9 @@ def login_emso_create(driver, title, image_names):
             except Exception as e:
                 print(f"⚠ Lỗi khi xóa file trong thư mục {video_folder}: {e}")
             return True
+
     return False
+
 
 def clear_comment_file(comment_file="comment.txt"):
         """
@@ -584,15 +593,33 @@ def post_comments(status_id, delay=2):
                 print(f"❌ Lỗi khi gửi request: {e}")
 
             time.sleep(delay)  # Chờ một khoảng thời gian trước khi gửi tiếp để tránh bị block
+            
+def delete_video_file():
+    file_path = os.path.join("videos", "Download.mp4")
+    try:
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            os.remove(file_path)
+            print(f"🗑 Đã xóa file: {file_path}")
+        else:
+            print(f"⚠ Không tìm thấy file: {file_path}")
+    except Exception as e:
+        print(f"⚠ Không thể xóa file: {e}")
 
-#=====================================Main=====================================
+def check_element_exists(driver, selector, timeout=5):
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.XPATH, selector))
+        )
+        return True
+    except TimeoutException:
+        return False
+
 def main():
     num_videos = int(input("Nhập số lượng video cần tải: "))
     driver = init_driver()
     driver.maximize_window()
     driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
-    click_element(driver, BUTTON_COMMENT.replace("{index}", "1"))  # Click vào video đầu tiên
-    # time.sleep(3000)  # Chờ người dùng thao tác thủ công nếu cần
+    click_element(driver, BUTTON_COMMENT.replace("{index}", "1"))
 
     data = load_existing_data()
     downloaded_count = 0
@@ -601,65 +628,77 @@ def main():
     try:
         while downloaded_count < num_videos:
             print(f"📥 Đang lấy video thứ {downloaded_count + 1}/{num_videos}...")
+
+            # Chờ video và lấy thông tin video
             video_id, title, video_url = get_video_info(driver, index)
             
+            # Kiểm tra nếu thông tin video không hợp lệ
             if not video_id or not title:
-                click_element(driver, NEXT_VIDEO)  # Chuyển sang video tiếp theo
-                print("⚠ Lỗi lấy thông tin video, chuyển video tiếp thep.")
-                index = 1
-                time.sleep(5)
+                print("⚠ Lỗi lấy thông tin video, chuyển video tiếp theo.")
+                move_to_next_video(driver)
+                time.sleep(5)  # Đảm bảo video tiếp theo được tải sau khi next
                 continue
 
+            # Kiểm tra nếu video đã tồn tại trong dữ liệu
             if video_id in data:
-                close_popup(driver)
                 print("⚠ Video đã tồn tại, chuyển sang video tiếp theo.")
                 move_to_next_video(driver)
-                index += 1
+                time.sleep(5)  # Đảm bảo video tiếp theo được tải sau khi next
                 continue
 
+            # Kiểm tra độ dài video
             duration = get_video_duration(video_url)
             if duration > 300:
-                close_popup(driver)
                 print("⚠ Video quá dài (>5 phút), bỏ qua.")
                 move_to_next_video(driver)
-                index += 1
+                time.sleep(5)  # Đảm bảo video tiếp theo được tải sau khi next
                 continue
-            
-            download_video(driver, index)
-            file_path = r"C:\Users\Thinh\Downloads\Download (1).mp4"
-            close_popup(driver)
 
-            if not file_path:
-                print("⚠ Lỗi tải video, chuyển sang video tiếp theo.")
+            # Kiểm tra xem nút tải có tồn tại không
+            right_click(driver, ITEM_VIDEO.replace("{index}", str(index)))
+
+            if not check_element_exists(driver, DOWLOAD_VIDEO_BUTTON):
+                print("⚠ Không có nút tải, chuyển sang video tiếp theo.")
                 move_to_next_video(driver)
-                index += 1
+                time.sleep(5)  # Đảm bảo video tiếp theo được tải sau khi next
                 continue
+            else:
+                try:
+                    # Thử nhấn nút tải video
+                    click_element(driver, DOWLOAD_VIDEO_BUTTON)
+                    print("✅ Nút tải video đã được nhấn.")
+                except Exception as e:
+                    print(f"⚠ Không thể nhấn nút tải video: {e}. Chuyển sang video tiếp theo.")
+                    move_to_next_video(driver)
+                    time.sleep(5)  # Đảm bảo video tiếp theo được tải sau khi next
+                    continue
 
+            # Lưu thông tin video
+            file_path = VIDEO_SAVE_DIR
             data[video_id] = {"title": title, "url": video_url, "file_path": file_path}
             save_data(data)
             downloaded_count += 1
             print(f"✅ Video {downloaded_count} đã tải xuống: {title}")
             
-            #Crawl comment
-            
             time.sleep(3)
 
-            comments = get_random_comments(driver, index = index)
+            # Lấy bình luận nếu có
+            comments = get_random_comments(driver, index=index)
             if comments:
                 save_comments_to_file(comments)
             else:
                 print("⚠ Không có bình luận nào để lưu.")
 
-            # Đăng lên EMSO
             print("🔄 Chuyển sang EMSO để đăng video...")
-            if login_emso_create(driver, title, [file_path]):
+            if login_emso_create(driver, title):
                 print("✅ Đăng bài thành công, quay lại TikTok...")
+                time.sleep(3)  # Đảm bảo rằng các thao tác xóa file hoàn tất
             else:
                 print("⚠ Đăng bài thất bại, quay lại TikTok...")
 
-            driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
-            time.sleep(60)  # Chờ trang TikTok tải lại
-            index += 1
+            # Sau khi đăng xong, chuyển sang video tiếp theo và tăng index
+            move_to_next_video(driver)
+            index += 1  # Đảm bảo rằng index được tăng sau khi video đã được xử lý hoàn tất
 
     finally:
         driver.quit()
