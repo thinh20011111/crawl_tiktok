@@ -122,22 +122,25 @@ def get_video_duration(url):
         return 0
 
 def get_current_video_index(driver):
-    """Get current video index based on DOM, starting from 1."""
+    """Get current video index based on DOM visibility."""
     try:
         video_elements = driver.find_elements(By.XPATH, "//article[@data-e2e='recommend-list-item-container']")
         for idx, element in enumerate(video_elements, start=1):
             is_visible = driver.execute_script(
-                "var rect = arguments[0].getBoundingClientRect();"
-                "return (rect.top >= 0 && rect.bottom <= window.innerHeight);",
+                """
+                var rect = arguments[0].getBoundingClientRect();
+                return (rect.top < window.innerHeight && rect.bottom > 0);
+                """,
                 element
             )
             if is_visible:
                 scroll_index = element.get_attribute("data-scroll-index")
-                return int(scroll_index) if scroll_index else idx
+                return int(scroll_index) if scroll_index and scroll_index.isdigit() else idx
         return 1
     except Exception as e:
         print(f"⚠ Error getting video index: {e}")
         return 1
+
 
 def get_video_info(driver):
     """Get video information including ID, title, and URL."""
@@ -595,36 +598,33 @@ def main():
 
     data = load_existing_data()
     downloaded_count = load_checkpoint()
-    index = 1
 
     try:
         while downloaded_count < num_videos:
             print(f"📥 Getting video {downloaded_count + 1}/{num_videos}...")
+
+            current_index = get_current_video_index(driver)
             video_id, title, video_url = get_video_info(driver)
 
             if not video_id or not title:
                 print("⚠ Error getting video info, moving to next video.")
                 move_to_next_video(driver)
-                index += 1
                 continue
 
             if video_id in data:
                 print("⚠ Video already exists, moving to next video.")
                 move_to_next_video(driver)
-                index += 1
                 continue
 
             if not is_vietnamese(title):
                 print("⚠ Not a Vietnamese video, moving to next video.")
                 move_to_next_video(driver)
-                index += 1
                 continue
 
             duration = get_video_duration(video_url)
             if duration > 300:
                 print("⚠ Video too long (>5 minutes), skipping.")
                 move_to_next_video(driver)
-                index += 1
                 continue
 
             try:
@@ -634,19 +634,16 @@ def main():
                 if not right_click(driver, current_xpath):
                     print("⚠ Right-click failed, moving to next video.")
                     move_to_next_video(driver)
-                    index += 1
                     continue
                     
                 if not check_element_exists(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
                     print("⚠ No download button, moving to next video.")
                     move_to_next_video(driver)
-                    index += 1
                     continue
                     
                 if not click_element(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
                     print("⚠ Cannot click download button, moving to next video.")
                     move_to_next_video(driver)
-                    index += 1
                     continue
                 print("✅ Download button clicked.")
                 
@@ -655,7 +652,6 @@ def main():
                 if not wait_for_download(FILE_PATHS['VIDEO_DOWNLOAD']):
                     print("⚠ Video download failed, moving to next video.")
                     move_to_next_video(driver)
-                    index += 1
                     continue
                 
                 if os.path.exists(FILE_PATHS['VIDEO_DOWNLOAD']):
@@ -664,7 +660,6 @@ def main():
             except Exception as e:
                 print(f"⚠ Error during download: {e}")
                 move_to_next_video(driver)
-                index += 1
                 continue
 
             data[video_id] = {
@@ -702,8 +697,6 @@ def main():
                 print("⚠ Video file not valid, skipping EMSO post...")
 
             move_to_next_video(driver)
-            index += 1
-            
 
     finally:
         driver.quit()
