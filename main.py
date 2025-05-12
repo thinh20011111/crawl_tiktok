@@ -22,6 +22,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import shutil
 from urllib.parse import urlparse
 import uuid
+import traceback
 
 # Constants
 XPATH = {
@@ -32,7 +33,10 @@ XPATH = {
     'DOWLOAD_VIDEO_BUTTON': "//div[@data-e2e='right-click-menu-popover_download-video']",
     'BUTTON_COMMENT': "(//span[@data-e2e='comment-icon'])[{index}]",
     'COMMENT_ITEM': "(//span[@data-e2e='comment-level-1'])[{index}]",
-    'NEXT_VIDEO': "//div[@class='css-1o2f1ti-DivFeedNavigationContainer ei9jdxs0']//div[2]//button[1]"
+    'NEXT_VIDEO': "//div[@class='css-1o2f1ti-DivFeedNavigationContainer ei9jdxs0']//div[2]//button[1]",
+    'INPUT_URL_SNAPTIK': "//input[@id='url']",
+    'DOWLOAD_SNAPTIK': "//button[normalize-space(text())='Download']",
+    'CONFRM_DOWLOAD_SNAPTIK': "//a[normalize-space(text())='Download Video']"
 }
 
 FILE_PATHS = {
@@ -50,47 +54,62 @@ def load_config(path="config.json"):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"⚠ Error loading config: {e}")
+        print(f"⚠ Lỗi khi đọc file config: {e}")
         return {}
 
-def init_driver(config_path="config.json"):
-    """Initialize and configure Chrome WebDriver."""
-    config = load_config(config_path)
-    chrome_options = Options()
-    
-    options = {
-        "--disable-notifications": None,
-        "--disable-blink-features=AutomationControlled": None,
-        "--disable-gpu": None,
-        "--no-sandbox": None,
-        "--mute-audio": None,
-        "--disable-dev-shm-usage": None,
-        "--disable-webgl": None,
-        "--disable-webrtc": None
-    }
-    if config.get("user_data_dir"):
-        options[f"--user-data-dir={config['user_data_dir']}"] = None
-    
-    for option, value in options.items():
-        chrome_options.add_argument(option)
-    
-    chrome_options.add_experimental_option("prefs", {
-        "profile.default_content_setting_values.webrtc": 2
-    })
+def init_driver(config_path="config.json", retries=3):
+    """Initialize and configure Chrome WebDriver with retries in headless mode."""
+    for attempt in range(retries):
+        try:
+            config = load_config(config_path)
+            chrome_options = Options()
+            
+            options = {
+                # "--headless=new": None,  # Run in headless mode
+                "--disable-notifications": None,
+                "--disable-blink-features=AutomationControlled": None,
+                "--disable-gpu": None,
+                "--no-sandbox": None,
+                "--mute-audio": None,
+                "--disable-dev-shm-usage": None,
+                "--disable-webgl": None,
+                "--disable-webrtc": None,
+                "--disable-features=TranslateUI,Translate": None,
+                "--disable-extensions": None,
+                "--dns-prefetch-disable": None,
+                "--window-size=1920,1080": None,  # Set window size for headless mode
+                "--disable-images": None  # Disable images to optimize
+            }
+            if config.get("user_data_dir"):
+                options[f"--user-data-dir={config['user_data_dir']}"] = None
+            
+            for option, value in options.items():
+                chrome_options.add_argument(option)
+            
+            chrome_options.add_experimental_option("prefs", {
+                "profile.default_content_setting_values.webrtc": 2,
+                "profile.default_content_setting_values.images": 2  # Disable images
+            })
 
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    if config.get("location"):
-        location = config["location"]
-        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
-            "latitude": location.get("latitude", 0),
-            "longitude": location.get("longitude", 0),
-            "accuracy": location.get("accuracy", 100)
-        })
+            if config.get("location"):
+                location = config["location"]
+                driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+                    "latitude": location.get("latitude", 0),
+                    "longitude": location.get("longitude", 0),
+                    "accuracy": location.get("accuracy", 100)
+                })
 
-    time.sleep(2)
-    return driver
+            time.sleep(2)
+            print("✅ WebDriver khởi tạo thành công (chế độ không giao diện)")
+            return driver
+        except Exception as e:
+            print(f"⚠ Lỗi khởi tạo WebDriver (thử {attempt + 1}/{retries}): {e}")
+            time.sleep(5)
+    print("❌ Không thể khởi tạo WebDriver sau nhiều lần thử")
+    return None
 
 def load_existing_data():
     """Load existing video data from JSON file."""
@@ -99,7 +118,9 @@ def load_existing_data():
             with open(FILE_PATHS['DATA_FILE'], "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"⚠ Error loading data file: {e}")
+            print(f"⚠ Lỗi khi đọc file dữ liệu {FILE_PATHS['DATA_FILE']}: {e}")
+            return {}
+    print(f"ℹ️ File dữ liệu {FILE_PATHS['DATA_FILE']} không tồn tại, tạo mới")
     return {}
 
 def save_data(data):
@@ -107,8 +128,9 @@ def save_data(data):
     try:
         with open(FILE_PATHS['DATA_FILE'], "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+        print("✅ Dữ liệu đã được lưu")
     except Exception as e:
-        print(f"⚠ Error saving data: {e}")
+        print(f"⚠ Lỗi khi lưu dữ liệu: {e}")
 
 def get_video_duration(url):
     """Get video duration using yt-dlp."""
@@ -118,7 +140,7 @@ def get_video_duration(url):
             info = ydl.extract_info(url, download=False)
             return info.get("duration", 0)
     except Exception as e:
-        print(f"⚠ Error getting video duration: {e}")
+        print(f"⚠ Lỗi khi lấy thời lượng video: {e}")
         return 0
 
 def get_current_video_index(driver):
@@ -138,9 +160,8 @@ def get_current_video_index(driver):
                 return int(scroll_index) if scroll_index and scroll_index.isdigit() else idx
         return 1
     except Exception as e:
-        print(f"⚠ Error getting video index: {e}")
+        print(f"⚠ Lỗi khi lấy chỉ số video: {e}")
         return 1
-
 
 def get_video_info(driver):
     """Get video information including ID, title, and URL."""
@@ -148,32 +169,44 @@ def get_video_info(driver):
         wait = WebDriverWait(driver, 15)
         video_url = driver.current_url
         video_id = video_url.split("/")[-1].split("?")[0]
-        print(f"🔍 Video URL: {video_url}")
+        print(f"🔍 URL video: {video_url}")
 
         index = get_current_video_index(driver)
-        print(f"🔄 Current index: {index}")
+        print(f"🔄 Chỉ số hiện tại: {index}")
 
         title = ""
         try:
             video_desc_xpath = XPATH['VIDEO_DESC'].replace("{index}", str(index))
             title_element = wait.until(EC.presence_of_element_located((By.XPATH, video_desc_xpath)))
             title = title_element.text.strip()
-            print(f"📝 Title: {title}")
+            print(f"📝 Tiêu đề: {title}")
 
             if len(title) > 150:
                 title = title[:147] + "..."
         except Exception as e:
-            print(f"⚠ Error getting title: {e}")
-            title = "Untitled"
+            print(f"⚠ Lỗi khi lấy tiêu đề: {e}")
+            title = "Không có tiêu đề"
 
-        if not title or title == "Untitled":
-            print("⚠ Invalid title.")
+        if not title or title == "Không có tiêu đề":
+            print("⚠ Tiêu đề không hợp lệ.")
             return None, None, None
 
         return video_id, title, video_url
     except Exception as e:
-        print(f"⚠ Error in get_video_info: {e}")
+        print(f"⚠ Lỗi khi lấy thông tin video: {e}")
         return None, None, None
+
+def check_element_exists(driver, xpath, timeout=5):
+    """Check if element exists on page."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.XPATH, xpath))
+        )
+        print(f"✅ Phần tử tồn tại: {xpath}")
+        return True
+    except TimeoutException:
+        print(f"⚠ Phần tử không tồn tại: {xpath}")
+        return False
 
 def click_element(driver, xpath, retries=3):
     """Click element with retries."""
@@ -185,11 +218,12 @@ def click_element(driver, xpath, retries=3):
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
             time.sleep(0.5)
             element.click()
+            print(f"✅ Nhấp thành công vào phần tử: {xpath}")
             return True
         except Exception as e:
-            print(f"⚠ Attempt {attempt + 1} failed: {e}")
+            print(f"⚠ Thử lần {attempt + 1} thất bại: {e}")
             time.sleep(2)
-    print(f"⛔ Cannot click element: {xpath} after {retries} attempts")
+    print(f"⛔ Không thể nhấp vào phần tử: {xpath} sau {retries} lần thử")
     return False
 
 def right_click(driver, xpath):
@@ -209,6 +243,7 @@ def right_click(driver, xpath):
             actions = ActionChains(driver)
             actions.move_to_element(element).context_click().perform()
             time.sleep(0.5)
+            print(f"✅ Nhấp chuột phải thành công: {xpath}")
             return True
         except:
             driver.execute_script("""
@@ -218,19 +253,20 @@ def right_click(driver, xpath):
                 element.dispatchEvent(evt);
             """, element)
             time.sleep(0.5)
+            print(f"✅ Nhấp chuột phải bằng script thành công: {xpath}")
             return True
     except TimeoutException:
-        print(f"⚠ Timeout waiting for element: {xpath}")
+        print(f"⚠ Hết thời gian chờ phần tử: {xpath}")
         return False
     except Exception as e:
-        print(f"⚠ Error performing right-click: {e}")
+        print(f"⚠ Lỗi khi nhấp chuột phải: {e}")
         return False
 
 def get_random_comments(driver, index, max_comments=20):
     """Get random comments from the video."""
     comments = []
     num_comments = random.randint(1, max_comments)
-    print(f"📬 Getting up to {num_comments} comments for index: {index}")
+    print(f"📬 Lấy tối đa {num_comments} bình luận cho chỉ số: {index}")
 
     try:
         first_comment_xpath = XPATH['COMMENT_ITEM'].replace("{index}", "1")
@@ -238,7 +274,7 @@ def get_random_comments(driver, index, max_comments=20):
             EC.presence_of_element_located((By.XPATH, first_comment_xpath))
         )
     except Exception as e:
-        print(f"⚠ No comments found: {e}")
+        print(f"⚠ Không tìm thấy bình luận: {e}")
         return []
 
     i = 1
@@ -255,6 +291,7 @@ def get_random_comments(driver, index, max_comments=20):
             break
         i += 1
 
+    print(f"✅ Đã lấy {len(comments)} bình luận")
     return comments
 
 def save_comments_to_file(comments, filename=FILE_PATHS['COMMENT_FILE']):
@@ -263,9 +300,9 @@ def save_comments_to_file(comments, filename=FILE_PATHS['COMMENT_FILE']):
         with open(filename, "a", encoding="utf-8") as file:
             for comment in comments:
                 file.write(comment + "\n")
-        print(f"✅ Saved {len(comments)} comments to {filename}")
+        print(f"✅ Đã lưu {len(comments)} bình luận vào {filename}")
     except Exception as e:
-        print(f"⚠ Error saving comments: {e}")
+        print(f"⚠ Lỗi khi lưu bình luận: {e}")
 
 def clear_video_folder():
     """Delete all files in the videos folder."""
@@ -274,61 +311,51 @@ def clear_video_folder():
             file_path = os.path.join(FILE_PATHS['VIDEO_FOLDER'], filename)
             if os.path.isfile(file_path):
                 os.remove(file_path)
-                print(f"🗑️ Deleted file: {file_path}")
-        print(f"✅ Cleared all files in {FILE_PATHS['VIDEO_FOLDER']}")
+                print(f"🗑️ Đã xóa file: {file_path}")
+        print(f"✅ Đã xóa tất cả file trong {FILE_PATHS['VIDEO_FOLDER']}")
     except Exception as e:
-        print(f"⚠ Error clearing video folder: {e}")
+        print(f"⚠ Lỗi khi xóa thư mục video: {e}")
 
 def move_to_next_video(driver, retries=3):
     """Move to the next video with retries, clear videos folder, and clear comment file."""
-    # Clear videos folder and comment file before moving to next video
     clear_video_folder()
     clear_comment_file()
     
     current_url = driver.current_url
     for attempt in range(retries):
-        if click_element(driver, XPATH['NEXT_VIDEO']):
-            try:
-                WebDriverWait(driver, 10).until(
-                    lambda d: d.current_url != current_url
-                )
-                print("✅ Moved to next video.")
-                time.sleep(3)
-                return True
-            except TimeoutException:
-                print(f"⚠ Timeout waiting for next video.")
-        print(f"⚠ Attempt {attempt + 1} to move to next video failed.")
+        if check_element_exists(driver, XPATH['NEXT_VIDEO']):
+            if click_element(driver, XPATH['NEXT_VIDEO']):
+                try:
+                    WebDriverWait(driver, 10).until(
+                        lambda d: d.current_url != current_url
+                    )
+                    print("✅ Đã chuyển sang video tiếp theo")
+                    time.sleep(3)
+                    return True
+                except TimeoutException:
+                    print(f"⚠ Hết thời gian chờ video tiếp theo")
+        print(f"⚠ Thử lần {attempt + 1} chuyển video thất bại")
         time.sleep(2)
     
-    print("⛔ Failed to move to next video after retries.")
+    print("⛔ Không thể chuyển sang video tiếp theo sau nhiều lần thử")
     driver.execute_script("window.scrollBy(0, window.innerHeight);")
     time.sleep(3)
     return False
-
-def check_element_exists(driver, selector, timeout=5):
-    """Check if element exists on page."""
-    try:
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.XPATH, selector))
-        )
-        return True
-    except TimeoutException:
-        return False
 
 def clear_comment_file(comment_file=FILE_PATHS['COMMENT_FILE']):
     """Clear the contents of the comment file."""
     try:
         with open(comment_file, "w", encoding="utf-8") as file:
             file.truncate(0)
-        print(f"✅ Cleared contents of {comment_file}")
+        print(f"✅ Đã xóa nội dung file {comment_file}")
     except Exception as e:
-        print(f"⚠ Error clearing {comment_file}: {e}")
+        print(f"⚠ Lỗi khi xóa file bình luận: {e}")
 
 def ensure_video_folder():
     """Create videos folder if it doesn't exist."""
     if not os.path.exists(FILE_PATHS['VIDEO_FOLDER']):
         os.makedirs(FILE_PATHS['VIDEO_FOLDER'])
-        print(f"📁 Created folder: {FILE_PATHS['VIDEO_FOLDER']}")
+        print(f"📁 Đã tạo thư mục: {FILE_PATHS['VIDEO_FOLDER']}")
 
 def is_valid_video_file(file_path):
     """Check if video file is valid."""
@@ -347,10 +374,10 @@ def wait_for_download(file_path, timeout=30):
     start_time = time.time()
     while time.time() - start_time < timeout:
         if is_valid_video_file(file_path):
-            print(f"✅ Video downloaded: {file_path}")
+            print(f"✅ Video đã tải: {file_path}")
             return True
         time.sleep(1)
-    print(f"⚠ Timeout waiting for download: {file_path}")
+    print(f"⚠ Hết thời gian chờ tải: {file_path}")
     return False
 
 def remove_video_file(file_path):
@@ -358,9 +385,9 @@ def remove_video_file(file_path):
     try:
         if os.path.exists(file_path):
             os.remove(file_path)
-            print(f"🗑️ Deleted file: {file_path}")
+            print(f"🗑️ Đã xóa file: {file_path}")
     except Exception as e:
-        print(f"⚠ Error deleting file {file_path}: {e}")
+        print(f"⚠ Lỗi khi xóa file {file_path}: {e}")
 
 def validate_token(token):
     """Validate token by checking API credentials."""
@@ -374,13 +401,13 @@ def validate_token(token):
         response = requests.get(url, headers=headers)
         return response.status_code == 200
     except Exception as e:
-        print(f"⚠ Token validation failed: {e}")
+        print(f"⚠ Xác thực token thất bại: {e}")
         return False
 
 def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="video/mp4"):
     """Upload video to EMSO."""
     if not os.path.exists(file_path):
-        print(f"⚠ File does not exist: {file_path}")
+        print(f"⚠ File không tồn tại: {file_path}")
         return None
 
     try:
@@ -392,9 +419,9 @@ def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="vide
                 else None
             )
             if not token_upload:
-                raise ValueError("Invalid token_upload.json format")
+                raise ValueError("Định dạng token_upload.json không hợp lệ")
     except Exception as e:
-        print(f"⚠ Error reading token_upload.json: {e}")
+        print(f"⚠ Lỗi khi đọc token_upload.json: {e}")
         return None
 
     url = "https://prod-pt.emso.vn/api/v1/videos/upload"
@@ -419,28 +446,29 @@ def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="vide
         response = requests.post(url, headers=headers, files=files)
         response_data = response.json()
         if response.status_code == 200 and "id" in response_data:
+            print(f"✅ Tải video lên EMSO thành công, ID: {response_data['id']}")
             return response_data["id"]
-        print(f"⚠ Error uploading video: {response.text}")
+        print(f"⚠ Lỗi khi tải video lên: {response.text}")
         return None
     except Exception as e:
-        print(f"⚠ API connection error: {e}")
+        print(f"⚠ Lỗi kết nối API: {e}")
         return None
 
 def upload_with_retry(file_path, file_name, token, retries=3, channel_id=2, privacy=1, mime_type="video/mp4"):
     """Upload video with retry mechanism."""
     for attempt in range(retries):
         if not validate_token(token):
-            print(f"⚠ Invalid token, trying another token...")
+            print(f"⚠ Token không hợp lệ, thử token khác...")
             token = get_random_token()
             if not token:
-                print("❌ No valid tokens available.")
+                print("❌ Không có token hợp lệ")
                 return None
         media_id = upload(file_path, file_name, token, channel_id, privacy, mime_type)
         if media_id:
             return media_id
-        print(f"⚠ Upload attempt {attempt + 1} failed, retrying...")
+        print(f"⚠ Thử tải lên lần {attempt + 1} thất bại, thử lại...")
         time.sleep(2)
-    print("❌ All upload attempts failed.")
+    print("❌ Tất cả các lần thử tải lên đều thất bại")
     return None
 
 def statuses(token, content, media_ids, post_type="moment", visibility="public"):
@@ -466,11 +494,12 @@ def statuses(token, content, media_ids, post_type="moment", visibility="public")
         response = requests.post(url, headers=headers, json=payload)
         response_data = response.json()
         if response.status_code == 200 and "id" in response_data:
+            print(f"✅ Đăng bài thành công, ID: {response_data['id']}")
             return response_data["id"]
-        print(f"⚠ Error posting: {response_data}")
+        print(f"⚠ Lỗi khi đăng bài: {response_data}")
         return None
     except Exception as e:
-        print(f"⚠ API connection error: {e}")
+        print(f"⚠ Lỗi kết nối API: {e}")
         return None
 
 def get_random_token(tokens_file="tokens.json"):
@@ -479,11 +508,11 @@ def get_random_token(tokens_file="tokens.json"):
         with open(tokens_file, "r", encoding="utf-8") as file:
             tokens = json.load(file)
             if not tokens:
-                print("⚠ No tokens in file.")
+                print("⚠ Không có token trong file")
                 return None
             return random.choice(tokens)
     except Exception as e:
-        print(f"⚠ Error reading token file: {e}")
+        print(f"⚠ Lỗi khi đọc file token: {e}")
         return None
 
 def clean_tiktok_url(url):
@@ -496,29 +525,36 @@ def post_comments(status_id, delay=2):
     url = f"https://prod-sn.emso.vn/api/v1/statuses/{status_id}/comments"
     
     if not os.path.exists("token_comment.json"):
-        print("❌ token_comment.json not found")
+        print("❌ Không tìm thấy token_comment.json")
         return
 
     try:
         with open("token_comment.json", "r", encoding="utf-8") as file:
             tokens = json.load(file)
     except json.JSONDecodeError:
-        print("❌ Error reading token_comment.json: Invalid content")
+        print("❌ Lỗi khi đọc token_comment.json: Nội dung không hợp lệ")
+        return
+    except Exception as e:
+        print(f"⚠ Lỗi khi đọc token_comment.json: {e}")
         return
 
     if not tokens:
-        print("❌ No valid tokens in list")
+        print("❌ Không có token hợp lệ")
         return
 
     if not os.path.exists(FILE_PATHS['COMMENT_FILE']):
-        print("❌ comment.txt not found")
+        print("❌ Không tìm thấy comment.txt")
         return
 
-    with open(FILE_PATHS['COMMENT_FILE'], "r", encoding="utf-8") as file:
-        comments = [line.strip() for line in file if line.strip()]
+    try:
+        with open(FILE_PATHS['COMMENT_FILE'], "r", encoding="utf-8") as file:
+            comments = [line.strip() for line in file if line.strip()]
+    except Exception as e:
+        print(f"⚠ Lỗi khi đọc file bình luận: {e}")
+        return
 
     if not comments:
-        print("❌ No comments to post")
+        print("❌ Không có bình luận để đăng")
         return
 
     num_posts = min(len(tokens), len(comments))
@@ -529,7 +565,7 @@ def post_comments(status_id, delay=2):
         'content-type': 'application/json',
         'origin': 'https://emso.vn',
         'referer': 'https://emso.vn/',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0HOLY; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
     }
 
     for i in range(num_posts):
@@ -551,15 +587,15 @@ def post_comments(status_id, delay=2):
             "page_owner_id": None
         }
 
-        print(f"📌 Sending comment: \"{comment}\" to post ID: {status_id}")
+        print(f"📌 Đang gửi bình luận: \"{comment}\" đến bài đăng ID: {status_id}")
         try:
             response = requests.post(url, json=payload, headers=headers)
             if response.status_code == 200:
-                print(f"✅ Comment sent successfully: {comment}")
+                print(f"✅ Bình luận gửi thành công: {comment}")
             else:
-                print(f"⚠ Error {response.status_code}: {response.text}")
+                print(f"⚠ Lỗi {response.status_code}: {response.text}")
         except requests.exceptions.RequestException as e:
-            print(f"❌ Request error: {e}")
+            print(f"❌ Lỗi gửi yêu cầu: {e}")
 
         time.sleep(delay)
 
@@ -573,134 +609,234 @@ def save_checkpoint(downloaded_count):
     try:
         with open(FILE_PATHS['CHECKPOINT_FILE'], "w", encoding="utf-8") as f:
             json.dump({"downloaded_count": downloaded_count}, f)
+        print("✅ Đã lưu checkpoint")
     except Exception as e:
-        print(f"⚠ Error saving checkpoint: {e}")
+        print(f"⚠ Lỗi khi lưu checkpoint: {e}")
 
-def load_checkpoint():
-    """Load progress state."""
+def load_checkpoint(num_videos):
+    """Load progress state and validate against num_videos."""
     if os.path.exists(FILE_PATHS['CHECKPOINT_FILE']):
         try:
             with open(FILE_PATHS['CHECKPOINT_FILE'], "r", encoding="utf-8") as f:
-                return json.load(f).get("downloaded_count", 0)
+                checkpoint = json.load(f)
+                downloaded_count = checkpoint.get("downloaded_count", 0)
+                if not isinstance(downloaded_count, int):
+                    print(f"⚠ Giá trị downloaded_count không hợp lệ: {downloaded_count}. Đặt lại về 0.")
+                    return 0
+                if downloaded_count >= num_videos:
+                    print(f"⚠ Checkpoint cho thấy đã tải {downloaded_count} video, vượt quá yêu cầu {num_videos}.")
+                    reset = input("Bạn có muốn đặt lại checkpoint về 0 để tiếp tục? (y/n): ").strip().lower()
+                    if reset == 'y':
+                        save_checkpoint(0)
+                        print("✅ Đã đặt lại checkpoint về 0")
+                        return 0
+                    else:
+                        print("ℹ️ Giữ nguyên checkpoint, thoát chương trình")
+                        return downloaded_count
+                return downloaded_count
         except Exception as e:
-            print(f"⚠ Error loading checkpoint: {e}")
+            print(f"⚠ Lỗi khi đọc checkpoint: {e}")
+            return 0
+    print(f"ℹ️ File checkpoint {FILE_PATHS['CHECKPOINT_FILE']} không tồn tại, bắt đầu từ 0")
     return 0
+
+def check_tiktok_page_ready(driver, retries=3):
+    """Check if TikTok page is ready with retries."""
+    for attempt in range(retries):
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.XPATH, XPATH['ITEM_VIDEO'].replace("{index}", "1")))
+            )
+            print("✅ Trang TikTok đã tải thành công")
+            return True
+        except Exception as e:
+            print(f"⚠ Trang TikTok chưa sẵn sàng (thử {attempt + 1}/{retries}): {e}")
+            time.sleep(5)
+    print("❌ Không thể tải trang TikTok sau nhiều lần thử")
+    return False
 
 def main():
     """Main function to run the TikTok video downloader."""
-    num_videos = int(input("Enter number of videos to download: "))
-    ensure_video_folder()
-    
-    driver = init_driver()
-    driver.maximize_window()
-    driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
-    click_element(driver, XPATH['BUTTON_COMMENT'].replace("{index}", "1"))
-
-    data = load_existing_data()
-    downloaded_count = load_checkpoint()
-
+    driver = None
     try:
-        while downloaded_count < num_videos:
-            print(f"📥 Getting video {downloaded_count + 1}/{num_videos}...")
+        print("📥 Nhập số lượng video cần tải...")
+        num_videos = int(input("Nhập số lượng video cần tải: "))
+        if num_videos <= 0:
+            print("❌ Số lượng video phải lớn hơn 0")
+            return
 
-            current_index = get_current_video_index(driver)
-            video_id, title, video_url = get_video_info(driver)
-
-            if not video_id or not title:
-                print("⚠ Error getting video info, moving to next video.")
-                move_to_next_video(driver)
-                continue
-
-            if video_id in data:
-                print("⚠ Video already exists, moving to next video.")
-                move_to_next_video(driver)
-                continue
-
-            if not is_vietnamese(title):
-                print("⚠ Not a Vietnamese video, moving to next video.")
-                move_to_next_video(driver)
-                continue
-
-            duration = get_video_duration(video_url)
-            if duration > 300:
-                print("⚠ Video too long (>5 minutes), skipping.")
-                move_to_next_video(driver)
-                continue
-
+        ensure_video_folder()
+        
+        print("🌐 Đang khởi tạo WebDriver...")
+        driver = init_driver()
+        if not driver:
+            print("❌ Không thể khởi tạo WebDriver, thoát chương trình...")
+            return
+        
+        driver.maximize_window()
+        
+        print("🌐 Đang mở TikTok...")
+        for attempt in range(3):
             try:
+                driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
+                print("⏳ Đang chờ trang tải...")
+                if check_tiktok_page_ready(driver):
+                    break
+                print(f"⚠ Thử tải trang lần {attempt + 1} thất bại, thử lại...")
+            except Exception as e:
+                print(f"⚠ Lỗi khi tải trang TikTok (thử {attempt + 1}/3): {e}")
+            time.sleep(5)
+        else:
+            print("❌ Không thể tải trang TikTok, thoát chương trình...")
+            return
+
+        print("🔍 Đang nhấp vào nút bình luận...")
+        comment_xpath = XPATH['BUTTON_COMMENT'].replace("{index}", "1")
+        if not check_element_exists(driver, comment_xpath):
+            print("❌ Nút bình luận không tồn tại, kiểm tra XPATH hoặc trạng thái trang")
+            return
+        if not click_element(driver, comment_xpath):
+            print("❌ Không thể nhấp nút bình luận, thoát chương trình...")
+            return
+
+        print("📂 Đang đọc dữ liệu hiện có...")
+        try:
+            data = load_existing_data()
+        except Exception as e:
+            print(f"❌ Lỗi khi đọc dữ liệu: {e}")
+            traceback.print_exc()
+            return
+
+        print("📂 Đang đọc checkpoint...")
+        try:
+            downloaded_count = load_checkpoint(num_videos)
+        except Exception as e:
+            print(f"❌ Lỗi khi đọc checkpoint: {e}")
+            traceback.print_exc()
+            return
+
+        print(f"ℹ️ Bắt đầu từ video {downloaded_count + 1}/{num_videos}")
+        if downloaded_count >= num_videos:
+            print(f"❌ Đã tải đủ {downloaded_count} video, không cần xử lý thêm")
+            return
+
+        while downloaded_count < num_videos:
+            print(f"📥 Đang xử lý video {downloaded_count + 1}/{num_videos}...")
+            try:
+                current_index = get_current_video_index(driver)
+                video_id, title, video_url = get_video_info(driver)
+
+                if not video_id or not title:
+                    print("⚠ Lỗi khi lấy thông tin video, chuyển sang video tiếp theo")
+                    move_to_next_video(driver)
+                    continue
+
+                if video_id in data:
+                    print("⚠ Video đã tồn tại, chuyển sang video tiếp theo")
+                    move_to_next_video(driver)
+                    continue
+
+                if not is_vietnamese(title):
+                    print("⚠ Video không phải tiếng Việt, chuyển sang video tiếp theo")
+                    move_to_next_video(driver)
+                    continue
+
+                duration = get_video_duration(video_url)
+                if duration > 300:
+                    print("⚠ Video quá dài (>5 phút), bỏ qua")
+                    move_to_next_video(driver)
+                    continue
+
                 current_index = get_current_video_index(driver)
                 current_xpath = XPATH['ITEM_VIDEO'].replace("{index}", str(current_index))
                 
+                if not check_element_exists(driver, current_xpath):
+                    print("⚠ Phần tử video không tồn tại, chuyển sang video tiếp theo")
+                    move_to_next_video(driver)
+                    continue
+                
                 if not right_click(driver, current_xpath):
-                    print("⚠ Right-click failed, moving to next video.")
+                    print("⚠ Nhấp chuột phải thất bại, chuyển sang video tiếp theo")
                     move_to_next_video(driver)
                     continue
                     
                 if not check_element_exists(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
-                    print("⚠ No download button, moving to next video.")
+                    print("⚠ Không tìm thấy nút tải video, chuyển sang video tiếp theo")
                     move_to_next_video(driver)
                     continue
                     
                 if not click_element(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
-                    print("⚠ Cannot click download button, moving to next video.")
+                    print("⚠ Không thể nhấp nút tải video, chuyển sang video tiếp theo")
                     move_to_next_video(driver)
                     continue
-                print("✅ Download button clicked.")
+                print("✅ Đã nhấp nút tải video")
                 
                 video_filename = generate_unique_filename(video_id)
                 video_path = os.path.join(FILE_PATHS['VIDEO_FOLDER'], video_filename)
                 if not wait_for_download(FILE_PATHS['VIDEO_DOWNLOAD']):
-                    print("⚠ Video download failed, moving to next video.")
+                    print("⚠ Tải video thất bại, chuyển sang video tiếp theo")
                     move_to_next_video(driver)
                     continue
                 
                 if os.path.exists(FILE_PATHS['VIDEO_DOWNLOAD']):
                     os.rename(FILE_PATHS['VIDEO_DOWNLOAD'], video_path)
                 
+                data[video_id] = {
+                    "title": title,
+                    "url": video_url,
+                    "file_path": video_path
+                }
+                save_data(data)
+                downloaded_count += 1
+                save_checkpoint(downloaded_count)
+                print(f"✅ Video {downloaded_count} đã tải: {title}")
+
+                comments = get_random_comments(driver, current_index)
+                if comments:
+                    save_comments_to_file(comments)
+                else:
+                    print("⚠ Không có bình luận để lưu")
+
+                if is_valid_video_file(video_path):
+                    print("🔄 Đang chuyển sang EMSO để đăng video...")
+                    token = get_random_token()
+                    if token:
+                        media_id = upload_with_retry(video_path, video_filename, token)
+                        if media_id:
+                            post_id = statuses(token, title, [media_id])
+                            if post_id:
+                                print(f"✅ Đăng bài thành công với ID: {post_id}")
+                                post_comments(post_id)
+                                clear_comment_file()
+                                remove_video_file(video_path)
+                            else:
+                                print("⚠ Đăng bài thất bại, lưu video để thử lại sau...")
+                        else:
+                            print("⚠ Tải video lên thất bại, lưu video để thử lại sau...")
+                    else:
+                        print("⚠ Không lấy được token, bỏ qua đăng lên EMSO...")
+                else:
+                    print("⚠ File video không hợp lệ, bỏ qua đăng lên EMSO...")
+
+                move_to_next_video(driver)
+
             except Exception as e:
-                print(f"⚠ Error during download: {e}")
+                print(f"⚠ Lỗi khi xử lý video {downloaded_count + 1}: {e}")
+                traceback.print_exc()
                 move_to_next_video(driver)
                 continue
 
-            data[video_id] = {
-                "title": title,
-                "url": video_url,
-                "file_path": video_path
-            }
-            save_data(data)
-            downloaded_count += 1
-            save_checkpoint(downloaded_count)
-            print(f"✅ Video {downloaded_count} downloaded: {title}")
-
-            comments = get_random_comments(driver, current_index)
-            if comments:
-                save_comments_to_file(comments)
-            else:
-                print("⚠ No comments to save.")
-
-            if is_valid_video_file(video_path):
-                print("🔄 Moving to EMSO to post video...")
-                token = get_random_token()
-                media_id = upload_with_retry(video_path, video_filename, token)
-                if media_id:
-                    post_id = statuses(token, title, [media_id])
-                    if post_id:
-                        print(f"✅ Post successful with ID: {post_id}")
-                        post_comments(post_id)
-                        clear_comment_file()
-                        remove_video_file(video_path)
-                    else:
-                        print("⚠ Post failed, saving video for retry later...")
-                else:
-                    print("⚠ Upload failed, saving video for retry later...")
-            else:
-                print("⚠ Video file not valid, skipping EMSO post...")
-
-            move_to_next_video(driver)
-
+    except Exception as e:
+        print(f"❌ Lỗi nghiêm trọng trong hàm main: {e}")
+        traceback.print_exc()
     finally:
-        driver.quit()
-        print("🎉 Completed!")
+        if driver:
+            try:
+                driver.quit()
+                print("✅ Đã đóng WebDriver")
+            except Exception as e:
+                print(f"⚠ Lỗi khi đóng WebDriver: {e}")
+        print("🎉 Hoàn thành!")
 
 if __name__ == "__main__":
     main()
