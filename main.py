@@ -656,7 +656,7 @@ def check_tiktok_page_ready(driver, retries=3):
     return False
 
 def main():
-    """Main function to run the TikTok video downloader."""
+    """Main function to run the TikTok video downloader using SnapTik and upload to EMSO."""
     driver = None
     try:
         print("📥 Nhập số lượng video cần tải...")
@@ -747,40 +747,84 @@ def main():
                     move_to_next_video(driver)
                     continue
 
-                current_index = get_current_video_index(driver)
-                current_xpath = XPATH['ITEM_VIDEO'].replace("{index}", str(current_index))
+                # Navigate to SnapTik
+                print("🌐 Đang chuyển sang SnapTik...")
+                driver.execute_script("window.open('https://vn.snaptik.com/');")
+                driver.switch_to.window(driver.window_handles[-1])
                 
-                if not check_element_exists(driver, current_xpath):
-                    print("⚠ Phần tử video không tồn tại, chuyển sang video tiếp theo")
+                # Paste TikTok URL into SnapTik input
+                print("📋 Đang dán URL video TikTok...")
+                try:
+                    input_url = WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, XPATH['INPUT_URL_SNAPTIK']))
+                    )
+                    input_url.clear()
+                    input_url.send_keys(video_url)
+                    print("✅ Đã dán URL video")
+                except Exception as e:
+                    print(f"⚠ Lỗi khi dán URL vào SnapTik: {e}")
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
                     move_to_next_video(driver)
                     continue
-                
-                if not right_click(driver, current_xpath):
-                    print("⚠ Nhấp chuột phải thất bại, chuyển sang video tiếp theo")
+
+                # Click Download button
+                if not click_element(driver, XPATH['DOWLOAD_SNAPTIK']):
+                    print("⚠ Không thể nhấp nút tải SnapTik, chuyển sang video tiếp theo")
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
                     move_to_next_video(driver)
                     continue
-                    
-                if not check_element_exists(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
-                    print("⚠ Không tìm thấy nút tải video, chuyển sang video tiếp theo")
+
+                # Wait for Confirm Download button and click
+                try:
+                    WebDriverWait(driver, 30).until(
+                        EC.element_to_be_clickable((By.XPATH, XPATH['CONFRM_DOWLOAD_SNAPTIK']))
+                    )
+                    if not click_element(driver, XPATH['CONFRM_DOWLOAD_SNAPTIK']):
+                        print("⚠ Không thể nhấp nút xác nhận tải SnapTik, chuyển sang video tiếp theo")
+                        driver.close()
+                        driver.switch_to.window(driver.window_handles[0])
+                        move_to_next_video(driver)
+                        continue
+                except Exception as e:
+                    print(f"⚠ Lỗi khi chờ nút xác nhận tải SnapTik: {e}")
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
                     move_to_next_video(driver)
                     continue
-                    
-                if not click_element(driver, XPATH['DOWLOAD_VIDEO_BUTTON']):
-                    print("⚠ Không thể nhấp nút tải video, chuyển sang video tiếp theo")
-                    move_to_next_video(driver)
-                    continue
-                print("✅ Đã nhấp nút tải video")
-                
+
+                # Wait for video download with SnapTik filename
+                snaptik_filename = f"snaptik_{video_id}.mp4"
+                snaptik_file_path = os.path.join(FILE_PATHS['VIDEO_FOLDER'], snaptik_filename)
                 video_filename = generate_unique_filename(video_id)
                 video_path = os.path.join(FILE_PATHS['VIDEO_FOLDER'], video_filename)
-                if not wait_for_download(FILE_PATHS['VIDEO_DOWNLOAD']):
-                    print("⚠ Tải video thất bại, chuyển sang video tiếp theo")
+                
+                print(f"⏳ Đang chờ tải video: {snaptik_file_path}")
+                if not wait_for_download(snaptik_file_path):
+                    print(f"⚠ Tải video thất bại: {snaptik_file_path}, chuyển sang video tiếp theo")
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                    move_to_next_video(driver)
+                    continue
+
+                # Rename downloaded file
+                if os.path.exists(snaptik_file_path):
+                    os.rename(snaptik_file_path, video_path)
+                    print(f"✅ Video đã được lưu tại: {video_path}")
+                else:
+                    print(f"⚠ File video không tồn tại tại: {snaptik_file_path}")
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
                     move_to_next_video(driver)
                     continue
                 
-                if os.path.exists(FILE_PATHS['VIDEO_DOWNLOAD']):
-                    os.rename(FILE_PATHS['VIDEO_DOWNLOAD'], video_path)
-                
+                # Close SnapTik tab and switch back to TikTok
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+                print("✅ Đã quay lại TikTok")
+
+                # Save video data
                 data[video_id] = {
                     "title": title,
                     "url": video_url,
@@ -791,18 +835,23 @@ def main():
                 save_checkpoint(downloaded_count)
                 print(f"✅ Video {downloaded_count} đã tải: {title}")
 
+                # Get and save comments
                 comments = get_random_comments(driver, current_index)
                 if comments:
                     save_comments_to_file(comments)
                 else:
                     print("⚠ Không có bình luận để lưu")
 
+                # Upload to EMSO
+                print(f"🔄 Đang kiểm tra và tải video lên EMSO: {video_path}")
                 if is_valid_video_file(video_path):
-                    print("🔄 Đang chuyển sang EMSO để đăng video...")
+                    print(f"✅ File video hợp lệ, bắt đầu tải lên EMSO...")
                     token = get_random_token()
                     if token:
+                        print(f"🔑 Đã lấy token: {token[:10]}...")  # Log partial token for debugging
                         media_id = upload_with_retry(video_path, video_filename, token)
                         if media_id:
+                            print(f"✅ Video tải lên EMSO thành công, Media ID: {media_id}")
                             post_id = statuses(token, title, [media_id])
                             if post_id:
                                 print(f"✅ Đăng bài thành công với ID: {post_id}")
@@ -810,19 +859,25 @@ def main():
                                 clear_comment_file()
                                 remove_video_file(video_path)
                             else:
-                                print("⚠ Đăng bài thất bại, lưu video để thử lại sau...")
+                                print(f"⚠ Đăng bài thất bại, lưu video tại {video_path} để thử lại sau")
                         else:
-                            print("⚠ Tải video lên thất bại, lưu video để thử lại sau...")
+                            print(f"⚠ Tải video lên EMSO thất bại, lưu video tại {video_path} để thử lại sau")
                     else:
-                        print("⚠ Không lấy được token, bỏ qua đăng lên EMSO...")
+                        print(f"⚠ Không lấy được token, bỏ qua đăng lên EMSO, lưu video tại {video_path}")
                 else:
-                    print("⚠ File video không hợp lệ, bỏ qua đăng lên EMSO...")
+                    print(f"⚠ File video không hợp lệ: {video_path}, bỏ qua đăng lên EMSO")
 
+                # Move to next video
                 move_to_next_video(driver)
 
             except Exception as e:
                 print(f"⚠ Lỗi khi xử lý video {downloaded_count + 1}: {e}")
                 traceback.print_exc()
+                # Ensure SnapTik tab is closed if open
+                if len(driver.window_handles) > 1:
+                    driver.switch_to.window(driver.window_handles[-1])
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
                 move_to_next_video(driver)
                 continue
 
