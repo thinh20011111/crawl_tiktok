@@ -33,7 +33,7 @@ XPATH = {
     'DOWLOAD_VIDEO_BUTTON': "//div[@data-e2e='right-click-menu-popover_download-video']",
     'BUTTON_COMMENT': "(//span[@data-e2e='comment-icon'])[{index}]",
     'COMMENT_ITEM': "(//span[@data-e2e='comment-level-1'])[{index}]",
-    'NEXT_VIDEO': "//div[@class='css-1o2f1ti-DivFeedNavigationContainer ei9jdxs0']//div[2]//button[1]",
+    'NEXT_VIDEO': "/html/body/div[1]/div[2]/main/aside/div[1]/div[2]/button",
     'INPUT_URL_SNAPTIK': "//input[@id='url']",
     'DOWLOAD_SNAPTIK': "//button[normalize-space(text())='Download']",
     'CONFRM_DOWLOAD_SNAPTIK': "//a[normalize-space(text())='Download Video']"
@@ -45,8 +45,28 @@ FILE_PATHS = {
     'VIDEO_DOWNLOAD': "videos/Download.mp4",
     'VIDEO_SAVE_DIR': "videos",
     'CHECKPOINT_FILE': "checkpoint.json",
-    'COMMENT_FILE': "comment.txt"
+    'COMMENT_FILE': "comment.txt",
+    'ERROR_TOKEN_FILE': "error_token.txt"
 }
+
+def log_error_token(token):
+    """Log invalid or failed token to error_token.txt, avoiding duplicates."""
+    try:
+        # Check if file exists and read existing tokens
+        existing_tokens = set()
+        if os.path.exists(FILE_PATHS['ERROR_TOKEN_FILE']):
+            with open(FILE_PATHS['ERROR_TOKEN_FILE'], "r", encoding="utf-8") as f:
+                existing_tokens = {line.strip() for line in f if line.strip()}
+
+        # Only write token if it doesn't already exist
+        if token not in existing_tokens:
+            with open(FILE_PATHS['ERROR_TOKEN_FILE'], "a", encoding="utf-8") as f:
+                f.write(f"{token}\n")
+            print(f"⚠ Đã ghi token lỗi vào {FILE_PATHS['ERROR_TOKEN_FILE']}: {token[:10]}...")
+        else:
+            print(f"ℹ️ Token đã tồn tại trong {FILE_PATHS['ERROR_TOKEN_FILE']}, bỏ qua: {token[:10]}...")
+    except Exception as e:
+        print(f"⚠ Lỗi khi ghi token vào file {FILE_PATHS['ERROR_TOKEN_FILE']}: {e}")
 
 def load_config(path="config.json"):
     """Load configuration from JSON file."""
@@ -399,9 +419,16 @@ def validate_token(token):
     }
     try:
         response = requests.get(url, headers=headers)
-        return response.status_code == 200
+        if response.status_code == 200:
+            print(f"✅ Token hợp lệ: {token[:10]}...")
+            return True
+        else:
+            print(f"⚠ Token không hợp lệ: {token[:10]}...")
+            log_error_token(token)
+            return False
     except Exception as e:
         print(f"⚠ Xác thực token thất bại: {e}")
+        log_error_token(token)
         return False
 
 def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="video/mp4"):
@@ -449,17 +476,19 @@ def upload(file_path, file_name, token, channel_id=2, privacy=1, mime_type="vide
             print(f"✅ Tải video lên EMSO thành công, ID: {response_data['id']}")
             return response_data["id"]
         print(f"⚠ Lỗi khi tải video lên: {response.text}")
+        log_error_token(token)  # Log token if upload fails
         return None
     except Exception as e:
         print(f"⚠ Lỗi kết nối API: {e}")
+        log_error_token(token)  # Log token if upload fails
         return None
 
-def upload_with_retry(file_path, file_name, token, retries=3, channel_id=2, privacy=1, mime_type="video/mp4"):
+def upload_with_retry(file_path, file_name, token, token_tracker, retries=3, channel_id=2, privacy=1, mime_type="video/mp4"):
     """Upload video with retry mechanism."""
     for attempt in range(retries):
         if not validate_token(token):
             print(f"⚠ Token không hợp lệ, thử token khác...")
-            token = get_random_token()
+            token = get_random_token(token_tracker=token_tracker)
             if not token:
                 print("❌ Không có token hợp lệ")
                 return None
@@ -467,9 +496,45 @@ def upload_with_retry(file_path, file_name, token, retries=3, channel_id=2, priv
         if media_id:
             return media_id
         print(f"⚠ Thử tải lên lần {attempt + 1} thất bại, thử lại...")
+        token = get_random_token(token_tracker=token_tracker)  # Get new token for retry
+        if not token:
+            print("❌ Không có token hợp lệ để thử lại")
+            return None
         time.sleep(2)
     print("❌ Tất cả các lần thử tải lên đều thất bại")
     return None
+
+def get_random_token(tokens_file="tokens.json", token_tracker=None):
+    """Get a random token from JSON file, ensuring no repetition until all tokens are used."""
+    if token_tracker is None:
+        token_tracker = {"tokens": [], "used": []}
+
+    # Load tokens if not already loaded
+    if not token_tracker["tokens"]:
+        try:
+            with open(tokens_file, "r", encoding="utf-8") as file:
+                token_tracker["tokens"] = json.load(file)
+                if not token_tracker["tokens"]:
+                    print("⚠ Không có token trong file")
+                    return None
+                # Shuffle tokens initially
+                random.shuffle(token_tracker["tokens"])
+        except Exception as e:
+            print(f"⚠ Lỗi khi đọc file token: {e}")
+            return None
+
+    # If all tokens have been used, reset and reshuffle
+    if not token_tracker["tokens"]:
+        token_tracker["tokens"] = token_tracker["used"].copy()
+        token_tracker["used"] = []
+        random.shuffle(token_tracker["tokens"])
+        print("🔄 Đã sử dụng hết token, xáo trộn lại danh sách token")
+
+    # Get and remove the first token from the list
+    selected_token = token_tracker["tokens"].pop(0)
+    token_tracker["used"].append(selected_token)
+    print(f"🔑 Đã lấy token: {selected_token[:10]}...")
+    return selected_token
 
 def statuses(token, content, media_ids, post_type="moment", visibility="public"):
     """Post status to EMSO and return post ID."""
@@ -500,19 +565,6 @@ def statuses(token, content, media_ids, post_type="moment", visibility="public")
         return None
     except Exception as e:
         print(f"⚠ Lỗi kết nối API: {e}")
-        return None
-
-def get_random_token(tokens_file="tokens.json"):
-    """Get a random token from JSON file."""
-    try:
-        with open(tokens_file, "r", encoding="utf-8") as file:
-            tokens = json.load(file)
-            if not tokens:
-                print("⚠ Không có token trong file")
-                return None
-            return random.choice(tokens)
-    except Exception as e:
-        print(f"⚠ Lỗi khi đọc file token: {e}")
         return None
 
 def clean_tiktok_url(url):
@@ -601,7 +653,7 @@ def post_comments(status_id, delay=2):
 
 def is_vietnamese(text):
     """Check if text contains Vietnamese characters."""
-    vietnamese_chars = "àáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳýỵỷỹÀÁÃẠẢĂẮẰẲẴẶÂẤẦẨẪẬÈÉẸẺẼÊỀẾỂỄỆĐÌÍĨỈỊÒÓÕỌỎÔỐỒỔỖỘƠỚỜỞỠỢÙÚŨỤỦƯỨỪỬỮỰỲÝỴỶỸ"
+    vietnamese_chars = "àáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳýỵỷỹÀÁÃẠẢĂẮẰẲẴẶÂẤẦẨẪẬÈÉẸẺẼÊỀẾẺẼẸĐÌÍĨỈỊÒÓÕỌỎÔỐỒỔỖỘƠỚỜỞỢÙÚŨỤỦƯỨỪỬỮỰỲÝỴỶỸ"
     return any(char in vietnamese_chars for char in text)
 
 def save_checkpoint(downloaded_count):
@@ -658,6 +710,7 @@ def check_tiktok_page_ready(driver, retries=3):
 def main():
     """Main function to run the TikTok video downloader using SnapTik and upload to EMSO."""
     driver = None
+    token_tracker = {"tokens": [], "used": []}  # Initialize token tracker
     try:
         print("📥 Nhập số lượng video cần tải...")
         num_videos = int(input("Nhập số lượng video cần tải: "))
@@ -846,10 +899,10 @@ def main():
                 print(f"🔄 Đang kiểm tra và tải video lên EMSO: {video_path}")
                 if is_valid_video_file(video_path):
                     print(f"✅ File video hợp lệ, bắt đầu tải lên EMSO...")
-                    token = get_random_token()
+                    token = get_random_token(token_tracker=token_tracker)
                     if token:
-                        print(f"🔑 Đã lấy token: {token[:10]}...")  # Log partial token for debugging
-                        media_id = upload_with_retry(video_path, video_filename, token)
+                        print(f"🔑 Đã lấy token: {token[:10]}...")
+                        media_id = upload_with_retry(video_path, video_filename, token, token_tracker)
                         if media_id:
                             print(f"✅ Video tải lên EMSO thành công, Media ID: {media_id}")
                             post_id = statuses(token, title, [media_id])
@@ -858,6 +911,8 @@ def main():
                                 post_comments(post_id)
                                 clear_comment_file()
                                 remove_video_file(video_path)
+                                
+                                time.sleep(200)  # Delay before moving to next video
                             else:
                                 print(f"⚠ Đăng bài thất bại, lưu video tại {video_path} để thử lại sau")
                         else:
