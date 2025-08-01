@@ -725,7 +725,12 @@ def main():
                 EC.presence_of_element_located((By.XPATH, XPATH['INPUT_SEARCH']))
             )
             search_input.clear()
-            search_input.send_keys("Hoàng Nam Tiến")
+            with open('key_word.txt', 'r', encoding='utf-8') as f:
+                # Giả sử chỉ lấy dòng đầu tiên, loại bỏ ký tự xuống dòng
+                keyword = f.readline().strip()
+
+            # Gửi từ khóa vào ô tìm kiếm
+            search_input.send_keys(keyword)
             search_input.send_keys(Keys.ENTER)
             print("✅ Đã nhập từ khóa tìm kiếm và nhấn Enter")
         except Exception as e:
