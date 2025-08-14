@@ -30,7 +30,7 @@ XPATH = {
     'SHARE_BUTTON': "(//span[@data-e2e='share-icon'])[{index}]",
     'INPUT_URL': "//input[@class='TUXTextInputCore-input']",
     'VIDEO_DESC': "//div[@data-e2e='browse-video-desc']",
-    'ITEM_VIDEO': "//article[@data-scroll-index='1']//video",
+    'ITEM_VIDEO': "//article[1]",
     'DOWLOAD_VIDEO_BUTTON': "//div[@data-e2e='right-click-menu-popover_download-video']",
     'BUTTON_COMMENT': "(//span[@data-e2e='comment-icon'])[{index}]",
     'COMMENT_ITEM': "(//p[@data-e2e='comment-level-1'])[{index}]",
@@ -655,7 +655,7 @@ def check_tiktok_page_ready(driver, retries=3):
     for attempt in range(retries):
         try:
             WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.XPATH, XPATH['ITEM_VIDEO'].replace("{index}", "1")))
+                EC.presence_of_element_located((By.XPATH, XPATH['ITEM_VIDEO']))
             )
             print("✅ Trang TikTok đã tải thành công")
             return True
@@ -830,6 +830,10 @@ def main():
                                 remove_video_file(video_path)
                 else:
                     print(f"⚠ File video lỗi: {video_path}")
+                
+                ## thêm thời gian chờ video tiếp theo
+                time.sleep(900)
+                
                 move_to_next_video(driver)
             except Exception as e:
                 print(f"⚠ Lỗi khi xử lý video: {e}")

@@ -162,7 +162,7 @@ def get_video_duration(url):
             return info.get("duration", 0)
     except Exception as e:
         print(f"⚠ Lỗi khi lấy thời lượng video: {e}")
-        return 0
+        return None  # Đổi 0 thành None để vòng lặp nhận biết lỗi
 
 def get_current_video_index(driver):
     """Get current video index based on DOM visibility."""
@@ -757,8 +757,9 @@ def main():
                 try:
                     driver.get("https://www.tiktok.com/foryou?lang=vi-VN")
                     print("⏳ Đang chờ trang tải...")
-                    if check_tiktok_page_ready(driver):
-                        return True
+                    # if check_tiktok_page_ready(driver):
+                    time.sleep(5)
+                    return True
                     print(f"⚠ Thử tải TikTok lần {attempt+1} thất bại...")
                 except Exception as e:
                     print(f"⚠ Lỗi khi tải TikTok (lần {attempt+1}/3): {e}")
@@ -803,7 +804,14 @@ def main():
                     print("⚠ Video không phải tiếng Việt → bỏ qua")
                     move_to_next_video(driver)
                     continue
-                if get_video_duration(video_url) > 300:
+                duration = get_video_duration(video_url)
+
+                if duration is None:
+                    print("⚠ Không lấy được thời lượng video → bỏ qua")
+                    move_to_next_video(driver)
+                    continue
+
+                if duration > 300:
                     print("⚠ Video quá dài (>5 phút) → bỏ qua")
                     move_to_next_video(driver)
                     continue
@@ -911,6 +919,7 @@ def main():
 
                 # Chuyển video kế tiếp
                 move_to_next_video(driver)
+                time.sleep(300)  # Đợi chuyển video
 
             except Exception as e:
                 print(f"⚠ Lỗi khi xử lý video: {e}")
