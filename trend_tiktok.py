@@ -34,7 +34,7 @@ XPATH = {
     'DOWLOAD_VIDEO_BUTTON': "//div[@data-e2e='right-click-menu-popover_download-video']",
     'BUTTON_COMMENT': "(//span[@data-e2e='comment-icon'])[{index}]",
     'COMMENT_ITEM': "(//p[@data-e2e='comment-level-1'])[{index}]",
-    'NEXT_VIDEO': "/html/body/div[1]/div[2]/div[2]/div[1]/div[2]/div[3]/div/div[1]/button[3]",
+    'NEXT_VIDEO': "//button[@aria-label='Đi đến video tiếp theo']",
     'INPUT_URL_SNAPTIK': "//input[@id='video-downloader-url']",
     'DOWLOAD_SNAPTIK': "//button[@type='submit']//span[contains(text(),'Tải xuống')]",
     'CONFRM_DOWLOAD_SNAPTIK': "//div[@class='result-download']//div[1]//div[1]//span[1]//div[2]//div[1]//a[1]",
@@ -832,7 +832,7 @@ def main():
                     print(f"⚠ File video lỗi: {video_path}")
                 
                 ## thêm thời gian chờ video tiếp theo
-                time.sleep(900)
+                time.sleep(200)
                 
                 move_to_next_video(driver)
             except Exception as e:

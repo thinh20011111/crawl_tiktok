@@ -1,5 +1,6 @@
 import time
 import json
+import socket
 import os
 import random
 import yt_dlp
@@ -69,10 +70,18 @@ def log_error_token(token):
     except Exception as e:
         print(f"⚠ Lỗi khi ghi token vào file {FILE_PATHS['ERROR_TOKEN_FILE']}: {e}")
 
-def load_config(path="config.json"):
+def is_online():
+    """Check if the system is online."""
+    try:
+        socket.create_connection(("www.google.com", 80), timeout=5)
+        return True
+    except OSError:
+        return False
+
+def load_config(config_path):
     """Load configuration from JSON file."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         print(f"⚠ Lỗi khi đọc file config: {e}")
@@ -82,37 +91,35 @@ def init_driver(config_path="config.json", retries=3):
     """Initialize and configure Chrome WebDriver with retries in headless mode."""
     for attempt in range(retries):
         try:
+            if not is_online():
+                print(f"⚠ No internet connection (thử {attempt + 1}/{retries})")
+                time.sleep(10)
+                continue
+
             config = load_config(config_path)
             chrome_options = Options()
-            
+
             options = {
-                # "--headless=new": None,  # Run in headless mode
+                # "--headless=new": None,  # Enable headless mode
+                "--no-sandbox": None,
+                "--disable-dev-shm-usage": None,
                 "--disable-notifications": None,
                 "--disable-blink-features=AutomationControlled": None,
-                "--disable-gpu": None,
-                "--no-sandbox": None,
-                "--mute-audio": None,
-                "--disable-dev-shm-usage": None,
-                "--disable-webgl": None,
-                "--disable-webrtc": None,
-                "--disable-features=TranslateUI,Translate": None,
-                "--disable-extensions": None,
-                "--dns-prefetch-disable": None,
-                "--window-size=1920,1080": None,  # Set window size for headless mode
-                "--disable-images": None  # Disable images to optimize
+                "--window-size=1920,1080": None,
             }
             if config.get("user_data_dir"):
                 options[f"--user-data-dir={config['user_data_dir']}"] = None
-            
+
             for option, value in options.items():
                 chrome_options.add_argument(option)
-            
+
             chrome_options.add_experimental_option("prefs", {
                 "profile.default_content_setting_values.webrtc": 2,
-                "profile.default_content_setting_values.images": 2  # Disable images
+                "profile.default_content_setting_values.images": 2
             })
 
-            service = Service(ChromeDriverManager().install())
+            service = Service(ChromeDriverManager().install(), log_path="chromedriver.log")
+            print(f"📍 ChromeDriver path: {service.path}")
             driver = webdriver.Chrome(service=service, options=chrome_options)
 
             if config.get("location"):
@@ -128,7 +135,7 @@ def init_driver(config_path="config.json", retries=3):
             return driver
         except Exception as e:
             print(f"⚠ Lỗi khởi tạo WebDriver (thử {attempt + 1}/{retries}): {e}")
-            time.sleep(5)
+            time.sleep(10)
     print("❌ Không thể khởi tạo WebDriver sau nhiều lần thử")
     return None
 
@@ -187,7 +194,7 @@ def get_current_video_index(driver):
 def get_video_info(driver):
     """Get video information including ID, title, and URL."""
     try:
-        wait = WebDriverWait(driver, 15)
+        wait = WebDriverWait(driver, 30)
         video_url = driver.current_url
         video_id = video_url.split("/")[-1].split("?")[0]
         print(f"🔍 URL video: {video_url}")
@@ -197,13 +204,35 @@ def get_video_info(driver):
 
         title = ""
         try:
+            # Define ITEM_VIDEO XPath (adjust based on your actual XPath)
+            item_video_xpath = XPATH['ITEM_VIDEO'].replace("{index}", str(index))
             video_desc_xpath = XPATH['VIDEO_DESC'].replace("{index}", str(index))
-            title_element = wait.until(EC.presence_of_element_located((By.XPATH, video_desc_xpath)))
-            title = title_element.text.strip()
+            print(f"XPath ITEM_VIDEO: {item_video_xpath}")
+            print(f"XPath VIDEO_DESC: {video_desc_xpath}")
+
+            # Hover over ITEM_VIDEO element
+            item_video_element = wait.until(EC.presence_of_element_located((By.XPATH, item_video_xpath)))
+            actions = ActionChains(driver)
+            actions.move_to_element(item_video_element).perform()
+            print("🖱 Hovered over ITEM_VIDEO element")
+
+            # Get title after hover
+            title_element = wait.until(EC.visibility_of_element_located((By.XPATH, video_desc_xpath)))
+            title = driver.execute_script("return arguments[0].textContent;", title_element).strip()
             print(f"📝 Tiêu đề: {title}")
 
             if len(title) > 150:
                 title = title[:147] + "..."
+        except TimeoutException:
+            print("⚠ Timeout khi đợi element hiển thị")
+            title = "Không có tiêu đề"
+        except NoSuchElementException:
+            print("⚠ Không tìm thấy element với XPath")
+            title = "Không có tiêu đề"
+        except StaleElementReferenceException:
+            print("⚠ Element bị stale, thử lại")
+            title_element = wait.until(EC.visibility_of_element_located((By.XPATH, video_desc_xpath)))
+            title = driver.execute_script("return arguments[0].textContent;", title_element).strip()
         except Exception as e:
             print(f"⚠ Lỗi khi lấy tiêu đề: {e}")
             title = "Không có tiêu đề"
